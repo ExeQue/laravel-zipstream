@@ -1,3 +1,5 @@
+![Laravel ZipStream](img/laravel-zipstream.jpg)
+
 # Laravel ZipStream
 
 A fluent Laravel wrapper for [maennchen/zipstream-php](https://github.com/maennchen/zipstream-php) to easily generate and stream ZIP archives.
