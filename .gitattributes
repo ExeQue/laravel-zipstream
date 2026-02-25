@@ -8,3 +8,5 @@
 /docker-compose.yml     export-ignore
 /pint.json              export-ignore
 /workbench              export-ignore
+/img                    export-ignore
+/testbench.yaml         export-ignore
