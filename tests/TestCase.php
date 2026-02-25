@@ -2,7 +2,6 @@
 
 namespace Tests;
 
-use ExeQue\ZipStream\Options\ZipOptions;
 use Orchestra\Testbench\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
@@ -24,8 +23,6 @@ abstract class TestCase extends BaseTestCase
     protected function tearDown(): void
     {
         parent::tearDown();
-
-        ZipOptions::clearCached();
 
         foreach ($this->testFiles as $file) {
             unlink($file);

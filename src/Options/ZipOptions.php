@@ -9,8 +9,6 @@ use ZipStream\ZipStream;
 
 class ZipOptions
 {
-    private static ?self $default = null;
-
     public string $comment;
     public CompressionMethod $compressionMethod;
     public int $deflateLevel;
@@ -37,7 +35,7 @@ class ZipOptions
 
     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
     {
-        $default = $config->get('laravel-zipstream.default_compression_method', $default);
+        $default = $config->get('laravel-zipstream.default_compression_method') ?? $default;
 
 
         if ($default instanceof CompressionMethod) {
@@ -51,23 +49,15 @@ class ZipOptions
             $default = CompressionMethod::from($default);
         }
 
-        if (is_null($default)) {
-            return;
-        }
-
         $this->compressionMethod = $default;
     }
 
     private function applyDefaultDeflateLevel(Repository $repository, mixed $default): void
     {
-        $default = $repository->get('laravel-zipstream.default_deflate_level', $default);
+        $default = $repository->get('laravel-zipstream.default_deflate_level') ?? $default;
 
         if (is_string($default)) {
             $default = (int)$default;
-        }
-
-        if (is_null($default)) {
-            return;
         }
 
         $this->deflateLevel = $default;
@@ -75,22 +65,13 @@ class ZipOptions
 
     private function applyDefaultZeroHeader(Repository $repository, mixed $default): void
     {
-        $default = $repository->get('laravel-zipstream.enable_zero_header', $default);
-
-        if (is_null($default)) {
-            return;
-        }
+        $default = $repository->get('laravel-zipstream.enable_zero_header') ?? $default;
 
         $this->enableZeroHeader = $default;
     }
 
     public static function default(Repository $config): self
     {
-        return clone(self::$default ??= new self($config));
-    }
-
-    public static function clearCached(): void
-    {
-        self::$default = null;
+        return new self($config);
     }
 }

@@ -10,14 +10,9 @@ use ZipStream\ZipStream;
 covers(ZipOptions::class);
 
 beforeEach(function () {
-    ZipOptions::clearCached();
     $this->config = Mockery::mock(Repository::class);
     // By default, the config will return the fallback value (the 2nd argument of get())
-    $this->config->shouldReceive('get')->andReturnUsing(fn ($key, $default) => $default);
-});
-
-afterEach(function () {
-    ZipOptions::clearCached();
+    $this->config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 });
 
 describe(ZipOptions::class, function () {
@@ -54,10 +49,10 @@ describe(ZipOptions::class, function () {
     it('respects compression method from config', function ($configValue, $expected) {
         $config = Mockery::mock(Repository::class);
         $config->shouldReceive('get')
-            ->with('laravel-zipstream.default_compression_method', Mockery::any())
+            ->with('laravel-zipstream.default_compression_method')
             ->andReturn($configValue);
         $config->shouldReceive('get')
-            ->andReturnUsing(fn ($key, $default) => $default);
+            ->andReturnUsing(fn ($key, $default = null) => $default);
 
         $options = ZipOptions::default($config);
 
@@ -92,10 +87,10 @@ describe(ZipOptions::class, function () {
     it('respects deflate level from config', function ($input, $expected) {
         $config = Mockery::mock(Repository::class);
         $config->shouldReceive('get')
-            ->with('laravel-zipstream.default_deflate_level', Mockery::any())
+            ->with('laravel-zipstream.default_deflate_level')
             ->andReturn($input);
         $config->shouldReceive('get')
-            ->andReturnUsing(fn ($key, $default) => $default);
+            ->andReturnUsing(fn ($key, $default = null) => $default);
 
         $options = ZipOptions::default($config);
 
@@ -113,7 +108,7 @@ describe(ZipOptions::class, function () {
 
     it('respects zero header from config', function () {
         $this->config->shouldReceive('get')
-            ->with('laravel-zipstream.enable_zero_header', Mockery::any())
+            ->with('laravel-zipstream.enable_zero_header')
             ->andReturn(true);
 
         $options = ZipOptions::default($this->config);
@@ -126,9 +121,9 @@ describe(ZipOptions::class, function () {
 
         $config = Mockery::mock(Repository::class);
         $config->shouldReceive('get')
-            ->with('laravel-zipstream.default_compression_method', Mockery::any())
+            ->with('laravel-zipstream.default_compression_method')
             ->andReturn(null);
-        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default) => $default);
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
         ZipOptions::default($config);
     });
@@ -138,9 +133,9 @@ describe(ZipOptions::class, function () {
 
         $config = Mockery::mock(Repository::class);
         $config->shouldReceive('get')
-            ->with('laravel-zipstream.default_deflate_level', Mockery::any())
+            ->with('laravel-zipstream.default_deflate_level')
             ->andReturn(null);
-        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default) => $default);
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
         ZipOptions::default($config);
     });
@@ -150,9 +145,9 @@ describe(ZipOptions::class, function () {
 
         $config = Mockery::mock(Repository::class);
         $config->shouldReceive('get')
-            ->with('laravel-zipstream.enable_zero_header', Mockery::any())
+            ->with('laravel-zipstream.enable_zero_header')
             ->andReturn(null);
-        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default) => $default);
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
         ZipOptions::default($config);
     });
