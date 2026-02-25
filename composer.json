@@ -4,7 +4,7 @@
     "type": "library",
     "minimum-stability": "stable",
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
         "maennchen/zipstream-php": "^3.2"
     },
     "require-dev": {
@@ -46,7 +46,6 @@
     ],
     "scripts": {
         "test": "vendor/bin/pest -p",
-        "test:mutation": "vendor/bin/pest -p --mutate",
         "lint": "vendor/bin/pint -p",
         "pre-commit": [
             "@composer test",

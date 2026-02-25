@@ -15,8 +15,6 @@ class Pending
     /** @var StreamableToZip[]|Directory[] */
     private array $entries;
 
-    private array $directories = [];
-
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
     {
         if ($streamable instanceof Verifiable) {
@@ -37,36 +35,35 @@ class Pending
             return $this->add($entries);
         }
 
-        $destination = $streamable->destination();
-
-        $this->entries[$destination] = $streamable;
+        $this->entries[] = $streamable;
 
         return $this;
     }
 
     public function process(ZipStream $stream): void
     {
-        [$files, $directories] = collect($this->entries)
-            ->partition(fn ($entry) => $entry instanceof StreamableToZip)
-            ->all();
+        $entries = collect($this->entries);
 
-        $directories->each(function (Directory $directory, string $destination) use ($stream) {
+        $directories = $entries->filter(fn ($entry) => $entry instanceof Directory);
+        $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
+
+        $directories->each(function (Directory $directory) use ($stream) {
             $options = $directory->getFileOptions();
 
             $stream->addDirectory(
-                fileName: $destination,
+                fileName: $directory->destination(),
                 comment: $options->comment,
                 lastModificationDateTime: $options->lastModified,
             );
         });
 
-        $files->each(function (StreamableToZip $file, string $destination) use ($stream) {
+        $files->each(function (StreamableToZip $file) use ($stream) {
             $options = $file instanceof HasFileOptions
                 ? $file->getFileOptions()
                 : new FileOptions();
 
             $stream->addFileFromCallback(
-                fileName: $destination,
+                fileName: $file->destination(),
                 callback: fn () => $file->stream(),
                 comment: $options->comment,
                 compressionMethod: $options->compressionMethod,

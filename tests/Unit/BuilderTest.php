@@ -52,8 +52,7 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('test.txt')
-            ->and($entries['test.txt'])->toBe($raw);
+        expect($entries)->toContain($raw);
     });
 
     it('can add content from disk', function () {
@@ -67,8 +66,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('dest.txt')
-            ->and($entries['dest.txt'])->toBeInstanceOf(DiskFile::class);
+        $exists = collect($entries)->contains(fn ($entry) => $entry instanceof DiskFile && $entry->destination() === 'dest.txt');
+        expect($exists)->toBeTrue();
     });
 
     it('can add content from disk using default destination', function () {
@@ -82,7 +81,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('file.txt');
+        $exists = collect($entries)->contains(fn ($entry) => $entry->destination() === 'file.txt');
+        expect($exists)->toBeTrue();
     });
 
     it('can add content from local path using default destination', function () {
@@ -91,7 +91,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey(basename(__FILE__));
+        $exists = collect($entries)->contains(fn ($entry) => $entry->destination() === basename(__FILE__));
+        expect($exists)->toBeTrue();
     });
 
     it('can add content from local path', function () {
@@ -100,8 +101,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('test.php')
-            ->and($entries['test.php'])->toBeInstanceOf(LocalFile::class);
+        $exists = collect($entries)->contains(fn ($entry) => $entry instanceof LocalFile && $entry->destination() === 'test.php');
+        expect($exists)->toBeTrue();
     });
 
     it('can add content from string', function () {
@@ -110,8 +111,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('test.txt')
-            ->and($entries['test.txt'])->toBeInstanceOf(Raw::class);
+        $exists = collect($entries)->contains(fn ($entry) => $entry instanceof Raw && $entry->destination() === 'test.txt');
+        expect($exists)->toBeTrue();
     });
 
     it('can add empty directory', function () {
@@ -120,8 +121,8 @@ describe(Builder::class, function () {
         $pending = Invader::make($this->builder)->pending;
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('empty-dir')
-            ->and($entries['empty-dir'])->toBeInstanceOf(Directory::class);
+        $exists = collect($entries)->contains(fn ($entry) => $entry instanceof Directory && $entry->destination() === 'empty-dir');
+        expect($exists)->toBeTrue();
     });
 
     it('can set ZIP options fluently', function () {

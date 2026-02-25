@@ -1,37 +1,44 @@
 
    PASS  Tests\Feature\FacadeTest
-  ✓ ExeQue\ZipStream\Facades\Zip → it accesses the builder                          0.05s
+  ✓ ExeQue\ZipStream\Facades\Zip → it accesses the builder               0.05s  
   ✓ ExeQue\ZipStream\Facades\Zip → it does not resolve a singleton
+
+   PASS  Tests\Feature\StreamedZipResponseTest
+  ✓ it can stream a zip response from a route                            0.02s  
+
    FAIL  Tests\Unit\BuilderTest
-  ⨯ ExeQue\ZipStream\Builder → it can set the filename
-  ⨯ ExeQue\ZipStream\Builder → it automatically adds .zip extension if missing
-  ⨯ ExeQue\ZipStream\Builder → it can add content via add()
+  ✓ ExeQue\ZipStream\Builder → it can set the filename                   0.01s  
+  ✓ ExeQue\ZipStream\Builder → it automatically adds .zip extension if missing
+  ⨯ ExeQue\ZipStream\Builder → it can add content via add()              0.01s  
   ⨯ ExeQue\ZipStream\Builder → it can add content from disk
   ⨯ ExeQue\ZipStream\Builder → it can add content from disk using default destination
   ⨯ ExeQue\ZipStream\Builder → it can add content from local path using default destination
   ⨯ ExeQue\ZipStream\Builder → it can add content from local path
   ⨯ ExeQue\ZipStream\Builder → it can add content from string
   ⨯ ExeQue\ZipStream\Builder → it can add empty directory
-  ⨯ ExeQue\ZipStream\Builder → it can set ZIP options fluently
-  ⨯ ExeQue\ZipStream\Builder → it can use store() and deflate() shortcuts
-  ⨯ ExeQue\ZipStream\Builder → it can use zeroHeader shortcuts
-  ⨯ ExeQue\ZipStream\Builder → it can output as string
-  ⨯ ExeQue\ZipStream\Builder → it can output as stream
-  ⨯ ExeQue\ZipStream\Builder → it can save to local path
-  ⨯ ExeQue\ZipStream\Builder → it can save to disk
-  ⨯ ExeQue\ZipStream\Builder → it can return a response
+  ✓ ExeQue\ZipStream\Builder → it can set ZIP options fluently
+  ✓ ExeQue\ZipStream\Builder → it can use store() and deflate() shortcuts
+  ✓ ExeQue\ZipStream\Builder → it can use zeroHeader shortcuts
+  ✓ ExeQue\ZipStream\Builder → it can output as string
+  ✓ ExeQue\ZipStream\Builder → it can output as stream
+  ✓ ExeQue\ZipStream\Builder → it can save to local path
+  ✓ ExeQue\ZipStream\Builder → it can save to disk
+  ✓ ExeQue\ZipStream\Builder → it can return a response
+  ✓ ExeQue\ZipStream\Builder → it streams the content of the response
+
    PASS  Tests\Unit\Content\DirectoryTest
-  ✓ ExeQue\ZipStream\Content\Directory → Implements interfaces                      0.03s
+  ✓ ExeQue\ZipStream\Content\Directory → Implements interfaces           0.03s  
   ✓ ExeQue\ZipStream\Content\Directory → Uses traits
-  ✓ ExeQue\ZipStream\Content\Directory → it sets the destination
+  ✓ ExeQue\ZipStream\Content\Directory → it sets the destination         0.01s  
   ✓ ExeQue\ZipStream\Content\Directory → it can change the destination
   ✓ ExeQue\ZipStream\Content\Directory → it can set the comment
   ✓ ExeQue\ZipStream\Content\Directory → it can set the last modified timestamp with dataset "epoch"
   ✓ ExeQue\ZipStream\Content\Directory → it can set the last modified timestamp with dataset "string 1"
   ✓ ExeQue\ZipStream\Content\Directory → it can set the last modified timestamp with dataset "string 2"
   ✓ ExeQue\ZipStream\Content\Directory → it can set the last modified timestamp with dataset "datetime"
+
    PASS  Tests\Unit\Content\DiskFileTest
-  ✓ ExeQue\ZipStream\Content\DiskFile → Implements interfaces                       0.01s
+  ✓ ExeQue\ZipStream\Content\DiskFile → Implements interfaces            0.01s  
   ✓ ExeQue\ZipStream\Content\DiskFile → Uses traits
   ✓ ExeQue\ZipStream\Content\DiskFile → it sets the destination based on source if omitted
   ✓ ExeQue\ZipStream\Content\DiskFile → it uses the given destination
@@ -56,8 +63,9 @@
   ✓ ExeQue\ZipStream\Content\DiskFile → it can set the zero header (withZeroHeader)
   ✓ ExeQue\ZipStream\Content\DiskFile → it can set the zero header (withoutZeroHeader)
   ✓ ExeQue\ZipStream\Content\DiskFile → it can get the file options
+
    PASS  Tests\Unit\Content\LocalFileTest
-  ✓ ExeQue\ZipStream\Content\LocalFile → Implements interfaces                      0.01s
+  ✓ ExeQue\ZipStream\Content\LocalFile → Implements interfaces           0.01s  
   ✓ ExeQue\ZipStream\Content\LocalFile → Uses traits
   ✓ ExeQue\ZipStream\Content\LocalFile → it sets the destination based on source if omitted
   ✓ ExeQue\ZipStream\Content\LocalFile → it uses the given destination
@@ -82,8 +90,9 @@
   ✓ ExeQue\ZipStream\Content\LocalFile → it can set the zero header (withZeroHeader)
   ✓ ExeQue\ZipStream\Content\LocalFile → it can set the zero header (withoutZeroHeader)
   ✓ ExeQue\ZipStream\Content\LocalFile → it can get the file options
+
    PASS  Tests\Unit\Content\RawTest
-  ✓ ExeQue\ZipStream\Content\Raw → Implements interfaces                            0.01s
+  ✓ ExeQue\ZipStream\Content\Raw → Implements interfaces                 0.01s  
   ✓ ExeQue\ZipStream\Content\Raw → Uses traits
   ✓ ExeQue\ZipStream\Content\Raw → it sets the destination and content
   ✓ ExeQue\ZipStream\Content\Raw → it returns the given content as stream with dataset "string"
@@ -97,7 +106,7 @@
   ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid content types with dataset "array"
   ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid content types with dataset "object"
   ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid content types with dataset "int"
-  ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid… 0.01s
+  ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid content types with dataset "bool"
   ✓ ExeQue\ZipStream\Content\Raw → it throws UnsupportedInputException for invalid content types with dataset "null"
   ✓ ExeQue\ZipStream\Content\Raw → it can change destination
   ✓ ExeQue\ZipStream\Content\Raw → it can set the comment
@@ -105,8 +114,8 @@
   ✓ ExeQue\ZipStream\Content\Raw → it can set the compression method with dataset "deflate"
   ✓ ExeQue\ZipStream\Content\Raw → it can set the compression method (store)
   ✓ ExeQue\ZipStream\Content\Raw → it can set the compression method (deflate)
-  ✓ ExeQue\ZipStream\Content\Raw → it can set the deflate level
-  ✓ ExeQue\ZipStream\Content\Raw → it can set the last modified timestamp with dataset "epoch"
+  ✓ ExeQue\ZipStream\Content\Raw → it can set the deflate level          0.01s  
+  ✓ ExeQue\ZipStream\Content\Raw → it can set the last modified timesta… 0.01s  
   ✓ ExeQue\ZipStream\Content\Raw → it can set the last modified timestamp with dataset "string 1"
   ✓ ExeQue\ZipStream\Content\Raw → it can set the last modified timestamp with dataset "string 2"
   ✓ ExeQue\ZipStream\Content\Raw → it can set the last modified timestamp with dataset "datetime"
@@ -116,279 +125,242 @@
   ✓ ExeQue\ZipStream\Content\Raw → it can set the zero header (withZeroHeader)
   ✓ ExeQue\ZipStream\Content\Raw → it can set the zero header (withoutZeroHeader)
   ✓ ExeQue\ZipStream\Content\Raw → it can get the file options
+
    PASS  Tests\Unit\FileOptionsTest
-  ✓ ExeQue\ZipStream\Contracts\HasFileOptions → Extends interfaces                  0.01s
+  ✓ ExeQue\ZipStream\Contracts\HasFileOptions → Extends interfaces       0.01s  
+
    PASS  Tests\Unit\Options\ZipOptionsTest
-  ✓ ExeQue\ZipStream\Options\ZipOptions → it can get a default instance             0.01s
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it can get a default instance
   ✓ ExeQue\ZipStream\Options\ZipOptions → it returns a clone each time ZipOptions::default() is called
   ✓ ExeQue\ZipStream\Options\ZipOptions → it has properties matching ZipStream constructor defaults when config is empty
-  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config
-  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects deflate level from config
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "named store"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "named deflate"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "numeric 0"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "numeric 8"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "enum store"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects compression method from config with dataset "enum deflate"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects deflate level from config with dataset "integer"
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it respects deflate level from config with dataset "string"
   ✓ ExeQue\ZipStream\Options\ZipOptions → it respects zero header from config
-   PASS  Tests\Unit\PendingTest
-  ✓ ExeQue\ZipStream\Pending → it can add a StreamableToZip entry                   0.01s
-  ✓ ExeQue\ZipStream\Pending → it can add a Directory entry
-  ✓ ExeQue\ZipStream\Pending → it can add a CanStreamToZip entry
-  ✓ ExeQue\ZipStream\Pending → it can add multiple entries from CanStreamToZip
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it can handle null config values for compression method
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it can handle null config values for deflate level
+  ✓ ExeQue\ZipStream\Options\ZipOptions → it can handle null config values for zero header
+
+   FAIL  Tests\Unit\PendingTest
+  ⨯ ExeQue\ZipStream\Pending → it can add a StreamableToZip entry        0.01s  
+  ⨯ ExeQue\ZipStream\Pending → it can add a Directory entry
+  ⨯ ExeQue\ZipStream\Pending → it can add a CanStreamToZip entry
+  ⨯ ExeQue\ZipStream\Pending → it can add multiple entries from CanStreamToZip
   ✓ ExeQue\ZipStream\Pending → it verifies entry if it implements Verifiable
   ✓ ExeQue\ZipStream\Pending → it processes directory entries
   ✓ ExeQue\ZipStream\Pending → it processes file entries
   ✓ ExeQue\ZipStream\Pending → it processes file entries with options
-  ✓ ExeQue\ZipStream\Pending → it can handle recursive CanStreamToZip entries
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  ───────────────────────────────────────────────────────────────────────────────────────
-   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder`…   BadMethodCallException
-  Received Mockery_1_Illuminate_Contracts_Config_Repository::get(), but no expectations were specified
-  at src/Options/ZipOptions.php:40
-     36▕     }
-     37▕
-     38▕     private function applyDefaultCompressionMethod(Repository $config, mixed $default): void
-     39▕     {
-  ➜  40▕         $default = $config->get('laravel-zipstream.default_compression_method', $default);
-     41▕
-     42▕         if (is_null($default)) {
-     43▕             return;
-     44▕         }
-  1   src/Options/ZipOptions.php:40
-  2   src/Options/ZipOptions.php:33
-  Tests:    17 failed, 110 passed (132 assertions)
-  Duration: 0.59s
+  ⨯ ExeQue\ZipStream\Pending → it can handle recursive CanStreamToZip e… 0.01s  
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'test.txt'
+
+  at tests/Unit/BuilderTest.php:55
+     51▕ 
+     52▕         $pending = Invader::make($this->builder)->pending;
+     53▕         $entries = Invader::make($pending)->entries;
+     54▕ 
+  ➜  55▕         expect($entries)->toHaveKey('test.txt')
+     56▕             ->and($entries['test.txt'])->toBe($raw);
+     57▕     });
+     58▕ 
+     59▕     it('can add content from disk', function () {
+
+  1   tests/Unit/BuilderTest.php:55
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'dest.txt'
+
+  at tests/Unit/BuilderTest.php:70
+     66▕ 
+     67▕         $pending = Invader::make($this->builder)->pending;
+     68▕         $entries = Invader::make($pending)->entries;
+     69▕ 
+  ➜  70▕         expect($entries)->toHaveKey('dest.txt')
+     71▕             ->and($entries['dest.txt'])->toBeInstanceOf(DiskFile::class);
+     72▕     });
+     73▕ 
+     74▕     it('can add content from disk using default destination', function () {
+
+  1   tests/Unit/BuilderTest.php:70
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'file.txt'
+
+  at tests/Unit/BuilderTest.php:85
+     81▕ 
+     82▕         $pending = Invader::make($this->builder)->pending;
+     83▕         $entries = Invader::make($pending)->entries;
+     84▕ 
+  ➜  85▕         expect($entries)->toHaveKey('file.txt');
+     86▕     });
+     87▕ 
+     88▕     it('can add content from local path using default destination', function () {
+     89▕         $this->builder->fromLocal(__FILE__);
+
+  1   tests/Unit/BuilderTest.php:85
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'BuilderTest.php'
+
+  at tests/Unit/BuilderTest.php:94
+     90▕ 
+     91▕         $pending = Invader::make($this->builder)->pending;
+     92▕         $entries = Invader::make($pending)->entries;
+     93▕ 
+  ➜  94▕         expect($entries)->toHaveKey(basename(__FILE__));
+     95▕     });
+     96▕ 
+     97▕     it('can add content from local path', function () {
+     98▕         $this->builder->fromLocal(__FILE__, 'test.php');
+
+  1   tests/Unit/BuilderTest.php:94
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'test.php'
+
+  at tests/Unit/BuilderTest.php:103
+     99▕ 
+    100▕         $pending = Invader::make($this->builder)->pending;
+    101▕         $entries = Invader::make($pending)->entries;
+    102▕ 
+  ➜ 103▕         expect($entries)->toHaveKey('test.php')
+    104▕             ->and($entries['test.php'])->toBeInstanceOf(LocalFile::class);
+    105▕     });
+    106▕ 
+    107▕     it('can add content from string', function () {
+
+  1   tests/Unit/BuilderTest.php:103
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'test.txt'
+
+  at tests/Unit/BuilderTest.php:113
+    109▕ 
+    110▕         $pending = Invader::make($this->builder)->pending;
+    111▕         $entries = Invader::make($pending)->entries;
+    112▕ 
+  ➜ 113▕         expect($entries)->toHaveKey('test.txt')
+    114▕             ->and($entries['test.txt'])->toBeInstanceOf(Raw::class);
+    115▕     });
+    116▕ 
+    117▕     it('can add empty directory', function () {
+
+  1   tests/Unit/BuilderTest.php:113
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\BuilderTest > `ExeQue\ZipStream\Builder` → it can add…    
+  Failed asserting that an array has the key 'empty-dir'
+
+  at tests/Unit/BuilderTest.php:123
+    119▕ 
+    120▕         $pending = Invader::make($this->builder)->pending;
+    121▕         $entries = Invader::make($pending)->entries;
+    122▕ 
+  ➜ 123▕         expect($entries)->toHaveKey('empty-dir')
+    124▕             ->and($entries['empty-dir'])->toBeInstanceOf(Directory::class);
+    125▕     });
+    126▕ 
+    127▕     it('can set ZIP options fluently', function () {
+
+  1   tests/Unit/BuilderTest.php:123
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\PendingTest > `ExeQue\ZipStream\Pending` → it can add…    
+  Failed asserting that an array has the key 'test.txt'
+
+  at tests/Unit/PendingTest.php:28
+     24▕         $pending->add($entry);
+     25▕ 
+     26▕         $entries = Invader::make($pending)->entries;
+     27▕ 
+  ➜  28▕         expect($entries)->toHaveKey('test.txt')
+     29▕             ->and($entries['test.txt'])->toBe($entry);
+     30▕     });
+     31▕ 
+     32▕     it('can add a Directory entry', function () {
+
+  1   tests/Unit/PendingTest.php:28
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\PendingTest > `ExeQue\ZipStream\Pending` → it can add…    
+  Failed asserting that an array has the key 'test-dir'
+
+  at tests/Unit/PendingTest.php:40
+     36▕         $pending->add($directory);
+     37▕ 
+     38▕         $entries = Invader::make($pending)->entries;
+     39▕ 
+  ➜  40▕         expect($entries)->toHaveKey('test-dir')
+     41▕             ->and($entries['test-dir'])->toBe($directory);
+     42▕     });
+     43▕ 
+     44▕     it('can add a CanStreamToZip entry', function () {
+
+  1   tests/Unit/PendingTest.php:40
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\PendingTest > `ExeQue\ZipStream\Pending` → it can add…    
+  Failed asserting that an array has the key 'nested.txt'
+
+  at tests/Unit/PendingTest.php:56
+     52▕         $pending->add($canStream);
+     53▕ 
+     54▕         $entries = Invader::make($pending)->entries;
+     55▕ 
+  ➜  56▕         expect($entries)->toHaveKey('nested.txt')
+     57▕             ->and($entries['nested.txt'])->toBe($entry);
+     58▕     });
+     59▕ 
+     60▕     it('can add multiple entries from CanStreamToZip', function () {
+
+  1   tests/Unit/PendingTest.php:56
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\PendingTest > `ExeQue\ZipStream\Pending` → it can add…    
+  Failed asserting that an array has the key 'file1.txt'
+
+  at tests/Unit/PendingTest.php:75
+     71▕ 
+     72▕         $entries = Invader::make($pending)->entries;
+     73▕ 
+     74▕         expect($entries)->toHaveCount(2)
+  ➜  75▕             ->toHaveKey('file1.txt')
+     76▕             ->toHaveKey('file2.txt');
+     77▕     });
+     78▕ 
+     79▕     it('verifies entry if it implements Verifiable', function () {
+
+  1   tests/Unit/PendingTest.php:75
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\Unit\PendingTest > `ExeQue\ZipStream\Pending` → it can hand…   
+  Failed asserting that an array has the key 'recursive.txt'
+
+  at tests/Unit/PendingTest.php:175
+    171▕         $pending->add($canStreamOuter);
+    172▕ 
+    173▕         $entries = Invader::make($pending)->entries;
+    174▕ 
+  ➜ 175▕         expect($entries)->toHaveKey('recursive.txt')
+    176▕             ->and($entries['recursive.txt'])->toBe($file);
+    177▕     });
+    178▕ });
+    179▕
+
+  1   tests/Unit/PendingTest.php:175
+
+
+  Tests:    12 failed, 126 passed (174 assertions)
+  Duration: 0.65s
+

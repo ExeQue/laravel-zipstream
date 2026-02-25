@@ -25,8 +25,7 @@ describe(Pending::class, function () {
 
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('test.txt')
-            ->and($entries['test.txt'])->toBe($entry);
+        expect($entries)->toContain($entry);
     });
 
     it('can add a Directory entry', function () {
@@ -37,8 +36,7 @@ describe(Pending::class, function () {
 
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('test-dir')
-            ->and($entries['test-dir'])->toBe($directory);
+        expect($entries)->toContain($directory);
     });
 
     it('can add a CanStreamToZip entry', function () {
@@ -53,8 +51,7 @@ describe(Pending::class, function () {
 
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('nested.txt')
-            ->and($entries['nested.txt'])->toBe($entry);
+        expect($entries)->toContain($entry);
     });
 
     it('can add multiple entries from CanStreamToZip', function () {
@@ -72,8 +69,8 @@ describe(Pending::class, function () {
         $entries = Invader::make($pending)->entries;
 
         expect($entries)->toHaveCount(2)
-            ->toHaveKey('file1.txt')
-            ->toHaveKey('file2.txt');
+            ->toContain($entry1)
+            ->toContain($entry2);
     });
 
     it('verifies entry if it implements Verifiable', function () {
@@ -94,7 +91,7 @@ describe(Pending::class, function () {
         $stream->shouldReceive('addDirectory')->once()->with(
             'dir1',
             'dir comment',
-            null
+            null,
         );
 
         $pending->process($stream);
@@ -117,7 +114,7 @@ describe(Pending::class, function () {
             null,
             null,
             null,
-            null
+            null,
         );
 
         $pending->process($stream);
@@ -134,7 +131,7 @@ describe(Pending::class, function () {
             compressionMethod: CompressionMethod::STORE,
             deflateLevel: 0,
             lastModified: new DateTimeImmutable('2023-01-01'),
-            enableZeroHeader: true
+            enableZeroHeader: true,
         );
         $file->shouldReceive('getFileOptions')->andReturn($options);
 
@@ -150,7 +147,7 @@ describe(Pending::class, function () {
             $options->lastModified,
             null,
             null,
-            true
+            true,
         );
 
         $pending->process($stream);
@@ -172,7 +169,6 @@ describe(Pending::class, function () {
 
         $entries = Invader::make($pending)->entries;
 
-        expect($entries)->toHaveKey('recursive.txt')
-            ->and($entries['recursive.txt'])->toBe($file);
+        expect($entries)->toContain($file);
     });
 });
