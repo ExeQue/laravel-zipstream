@@ -1,0 +1,23 @@
+services:
+  php:
+    build:
+      context: ./docker
+    volumes:
+      - .:/var/www/html
+    environment:
+      - XDEBUG_MODE=coverage
+  composer:
+    extends:
+      service: php
+    ports:
+        - "8000:8000"
+    volumes:
+      - .:/var/www/html
+      - ~/.cache/composer:/.composer/cache
+    entrypoint: [ "composer" ]
+  testbench:
+    extends:
+      service: php
+    volumes:
+      - .:/var/www/html
+    entrypoint: [ "vendor/bin/testbench" ]

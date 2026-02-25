@@ -1,0 +1,75 @@
+{
+    "name": "exeque/laravel-zipstream",
+    "description": "Zip streaming for Laravel",
+    "type": "library",
+    "minimum-stability": "stable",
+    "require": {
+        "php": "^8.3",
+        "maennchen/zipstream-php": "^3.2"
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.8|^4.0",
+        "symfony/var-dumper": "^7.2",
+        "laravel/pint": "^1.21",
+        "orchestra/testbench": "^10.9"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "ExeQue\\ZipStream\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Morten Harders",
+            "email": "mmh@harders-it.dk"
+        }
+    ],
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "keywords": [
+        "assert",
+        "zip",
+        "zipstream",
+        "php"
+    ],
+    "scripts": {
+        "test": "vendor/bin/pest -p",
+        "test:mutation": "vendor/bin/pest -p --mutate",
+        "lint": "vendor/bin/pint -p",
+        "pre-commit": [
+            "@composer test",
+            "@composer lint"
+        ],
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "clear": "@php vendor/bin/testbench package:purge-skeleton --ansi",
+        "prepare": "@php vendor/bin/testbench package:discover --ansi",
+        "build": "@php vendor/bin/testbench workbench:build --ansi",
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@build",
+            "@php vendor/bin/testbench serve --ansi --port=8080"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "ExeQue\\ZipStream\\LaravelZipStreamServiceProvider"
+            ]
+        }
+    }
+}
