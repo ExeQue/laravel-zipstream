@@ -57,6 +57,58 @@ Add content directly from a string, resource, or stream.
 Zip::fromRaw('hello.txt', 'Hello World');
 ```
 
+### From Custom Classes (Contracts)
+
+You can implement `StreamableToZip` or `CanStreamToZip` on your custom classes (e.g., a `Media` model or `MediaCollection`) to easily add them to the ZIP archive.
+
+#### StreamableToZip
+
+The `StreamableToZip` contract is ideal for individual models that represent a file.
+
+```php
+use ExeQue\ZipStream\Contracts\StreamableToZip;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Storage;
+
+class Media extends Model implements StreamableToZip
+{
+    public function stream()
+    {
+        // Return resource, string, StreamInterface, or a callable that returns one of these.
+        return Storage::disk($this->disk)->readStream($this->path);
+    }
+
+    public function destination(): string
+    {
+        return "{$this->collection_name}/{$this->file_name}";
+    }
+}
+
+Zip::add(Media::first());
+```
+
+#### CanStreamToZip
+
+The `CanStreamToZip` contract is useful for classes that represent a collection of files, such as a `MediaCollection`.
+
+```php
+use ExeQue\ZipStream\Contracts\CanStreamToZip;
+use Illuminate\Database\Eloquent\Collection;
+
+class MediaCollection extends Collection implements CanStreamToZip
+{
+    public function getStreamableToZip(): iterable
+    {
+        return $this->all();
+    }
+}
+
+$media = Media::where('collection_name', 'avatars')->get();
+$collection = new MediaCollection($media);
+
+Zip::add($collection);
+```
+
 ### Empty Directories
 Create an empty directory within the ZIP.
 
@@ -76,6 +128,21 @@ Zip::fromLocal('/path/file.txt', 'file.txt', function (LocalFile $file) {
          ->deflate()
          ->deflateLevel(9);
 });
+```
+
+## Extending the Builder (Macros)
+
+The `Zip` facade and `Builder` class use the Laravel `Macroable` trait, allowing you to add custom functionality at runtime.
+
+```php
+use ExeQue\ZipStream\Facades\Zip;
+
+Zip::macro('fromS3', function (string $path, ?string $destination = null) {
+    return $this->fromDisk('s3', $path, $destination);
+});
+
+// Usage
+Zip::fromS3('exports/report.pdf')->toResponse();
 ```
 
 ## Global ZIP Options

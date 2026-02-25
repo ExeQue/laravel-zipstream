@@ -19,6 +19,7 @@ use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\File as Filesystem;
 use Illuminate\Support\Str;
+use Illuminate\Support\Traits\Macroable;
 use Psr\Http\Message\StreamInterface;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use ZipStream\ZipStream;
@@ -26,6 +27,7 @@ use ZipStream\ZipStream;
 class Builder implements Responsable, HasZipOptions
 {
     use InteractsWithZipOptions;
+    use Macroable;
 
     private string $filename;
 
