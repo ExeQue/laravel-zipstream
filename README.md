@@ -9,7 +9,7 @@ A fluent Laravel wrapper for [maennchen/zipstream-php](https://github.com/maennc
 You can install the package via composer:
 
 ```bash
-composer require exeque/zlip-stream
+composer require exeque/laravel-zipstream
 ```
 
 The service provider will automatically register itself.
