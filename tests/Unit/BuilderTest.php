@@ -25,7 +25,7 @@ covers(Builder::class);
 beforeEach(function () {
     $this->filesystemManager = Mockery::mock(Factory::class);
     $this->config = Mockery::mock(Repository::class);
-    $this->config->shouldReceive('get')->andReturnUsing(fn ($key, $default) => $default);
+    $this->config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
     $this->builder = new Builder(
         $this->filesystemManager,
         $this->config,
