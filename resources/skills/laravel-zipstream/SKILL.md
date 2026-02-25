@@ -51,8 +51,51 @@ Zip::fromLocal('/absolute/path/to/file.log', 'logs/app.log');
 // From Raw String/Stream Content
 Zip::fromRaw('notes.txt', 'This is the content of the file.');
 
+// From Custom Classes (Contracts)
+// Individual models implementing StreamableToZip
+Zip::add($mediaModel);
+
+// Collections implementing CanStreamToZip
+Zip::add($mediaCollection);
+
 // Create an Empty Directory
 Zip::emptyDirectory('empty_folder');
+```
+
+## Using Custom Classes (Contracts)
+Implement contracts on your models or collections to integrate them directly:
+
+### StreamableToZip
+Ideal for objects representing a single file (e.g., a `Media` model).
+```php
+use ExeQue\ZipStream\Contracts\StreamableToZip;
+
+class Media extends Model implements StreamableToZip {
+    public function stream() { return Storage::disk($this->disk)->readStream($this->path); }
+    public function destination(): string { return "media/{$this->name}"; }
+}
+```
+
+### CanStreamToZip
+Ideal for objects representing multiple files (e.g., a custom collection).
+```php
+use ExeQue\ZipStream\Contracts\CanStreamToZip;
+
+class MediaCollection extends Collection implements CanStreamToZip {
+    public function getStreamableToZip(): iterable { return $this->all(); }
+}
+```
+
+## Extending via Macros
+The `Zip` facade and `Builder` are `Macroable`:
+
+```php
+Zip::macro('fromS3', function (string $path, ?string $destination = null) {
+    return $this->fromDisk('s3', $path, $destination);
+});
+
+// Usage
+Zip::fromS3('report.pdf')->toResponse();
 ```
 
 ## Configuring File-Specific Options
