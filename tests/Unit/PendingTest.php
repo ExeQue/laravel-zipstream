@@ -171,4 +171,28 @@ describe(Pending::class, function () {
 
         expect($entries)->toContain($file);
     });
+
+    it('stops processing when connection is aborted and option enabled', function () {
+        require_once __DIR__ . '/../Support/connection_abort.php';
+        $GLOBALS['__zipstream_connection_aborted_override'] = true;
+
+        $pending = new Pending();
+        $pending->stopOnConnectionAborted();
+
+        $directory = Directory::make('dir')->comment('dir comment');
+        $pending->add($directory);
+
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('file.txt');
+        $file->shouldReceive('stream')->andReturn('content');
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addDirectory')->never();
+        $stream->shouldReceive('addFileFromCallback')->never();
+
+        $pending->process($stream);
+
+        unset($GLOBALS['__zipstream_connection_aborted_override']);
+    });
 });

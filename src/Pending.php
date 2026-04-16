@@ -15,6 +15,8 @@ class Pending
     /** @var StreamableToZip[]|Directory[] */
     private array $entries;
 
+    private bool $stopOnConnectionAborted = false;
+
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
     {
         if ($streamable instanceof Verifiable) {
@@ -40,6 +42,13 @@ class Pending
         return $this;
     }
 
+    public function stopOnConnectionAborted(): static
+    {
+        $this->stopOnConnectionAborted = true;
+
+        return $this;
+    }
+
     public function process(ZipStream $stream): void
     {
         $entries = collect($this->entries);
@@ -48,6 +57,10 @@ class Pending
         $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
 
         $directories->each(function (Directory $directory) use ($stream) {
+            if ($this->aborted()) {
+                return false;
+            }
+
             $options = $directory->getFileOptions();
 
             $stream->addDirectory(
@@ -58,6 +71,10 @@ class Pending
         });
 
         $files->each(function (StreamableToZip $file) use ($stream) {
+            if ($this->aborted()) {
+                return false;
+            }
+
             $options = $file instanceof HasFileOptions
                 ? $file->getFileOptions()
                 : new FileOptions();
@@ -72,5 +89,10 @@ class Pending
                 enableZeroHeader: $options->enableZeroHeader
             );
         });
+    }
+
+    private function aborted(): bool
+    {
+        return $this->stopOnConnectionAborted && connection_aborted();
     }
 }
