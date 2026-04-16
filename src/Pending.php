@@ -7,6 +7,8 @@ use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
+use ExeQue\ZipStream\Events\EventQueue;
+use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Options\FileOptions;
 use ZipStream\ZipStream;
 
@@ -49,35 +51,57 @@ class Pending
         return $this;
     }
 
-    public function process(ZipStream $stream): void
+    /** @noinspection PhpInconsistentReturnPointsInspection */
+    public function process(ZipStream $stream, EventQueue $events = new EventQueue()): void
     {
         $entries = collect($this->entries);
+
+        $events->call(EventType::ProcessStarted);
 
         $directories = $entries->filter(fn ($entry) => $entry instanceof Directory);
         $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
 
-        $directories->each(function (Directory $directory) use ($stream) {
+        $directories->each(function (Directory $directory) use ($stream, $events) {
             if ($this->aborted()) {
+                $events->call(EventType::ProcessAborted);
+
                 return false;
             }
 
             $options = $directory->getFileOptions();
+
+            $events->call([
+                EventType::StreamingDirectory,
+                EventType::StreamingToZip
+            ], $directory, $options);
 
             $stream->addDirectory(
                 fileName: $directory->destination(),
                 comment: $options->comment,
                 lastModificationDateTime: $options->lastModified,
             );
+
+            $events->call([
+                EventType::StreamedDirectory,
+                EventType::StreamedToZip,
+            ], $directory, $options);
         });
 
-        $files->each(function (StreamableToZip $file) use ($stream) {
+        $files->each(function (StreamableToZip $file) use ($stream, $events) {
             if ($this->aborted()) {
+                $events->call(EventType::ProcessAborted);
+
                 return false;
             }
 
             $options = $file instanceof HasFileOptions
                 ? $file->getFileOptions()
                 : new FileOptions();
+
+            $events->call([
+                EventType::StreamingFile,
+                EventType::StreamingToZip,
+            ], $file, $options);
 
             $stream->addFileFromCallback(
                 fileName: $file->destination(),
@@ -88,7 +112,14 @@ class Pending
                 lastModificationDateTime: $options->lastModified,
                 enableZeroHeader: $options->enableZeroHeader
             );
+
+            $events->call([
+                EventType::StreamedFile,
+                EventType::StreamedToZip,
+            ], $file, $options);
         });
+
+        $events->call(EventType::ProcessFinished);
     }
 
     private function aborted(): bool

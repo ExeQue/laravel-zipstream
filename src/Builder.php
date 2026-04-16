@@ -11,6 +11,8 @@ use ExeQue\ZipStream\Content\Raw;
 use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasZipOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
+use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\EventQueue;
 use GuzzleHttp\Psr7\Stream;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
@@ -36,6 +38,7 @@ class Builder implements Responsable, HasZipOptions
     public function __construct(
         private Factory $filesystemManager,
         Repository $config,
+        private EventQueue $events = new EventQueue(),
     ) {
         $this->pending = new Pending();
 
@@ -123,13 +126,16 @@ class Builder implements Responsable, HasZipOptions
 
     public function saveToLocal(string $path): ?int
     {
+
         Filesystem::makeDirectory(dirname($path), 0755, true, true);
+
+        $this->events->call(EventType::SavingToFilesystem, $path);
 
         $stream = new Stream(fopen($path, 'w+b'));
 
         $zipStream = $this->prepareZipStream($stream, false);
 
-        $this->pending->process($zipStream);
+        $this->pending->process($zipStream, $this->events);
 
         $zipStream->finish();
 
@@ -137,17 +143,21 @@ class Builder implements Responsable, HasZipOptions
 
         $stream->close();
 
+        $this->events->call(EventType::SavedToFilesystem, $path, $size);
+
         return $size;
     }
 
     public function saveToDisk(string|FilesystemAdapter $disk, string $path): ?int
     {
+        $this->events->call(EventType::SavingToDisk, $disk, $path);
+
         $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
         $stream = new Stream(fopen('php://temp', 'w+b'));
 
         $zipStream = $this->prepareZipStream($stream, false);
 
-        $this->pending->process($zipStream);
+        $this->pending->process($zipStream, $this->events);
 
         $zipStream->finish();
 
@@ -158,6 +168,8 @@ class Builder implements Responsable, HasZipOptions
         $disk->writeStream($path, $fh);
 
         fclose($fh);
+
+        $this->events->call(EventType::SavedToDisk, $disk, $path, $size);
 
         return $size;
     }
@@ -183,11 +195,15 @@ class Builder implements Responsable, HasZipOptions
     {
         return new StreamedResponse(
             function () {
+                $this->events->call(EventType::StreamingResponse);
+
                 $stream = $this->prepareZipStream();
 
-                $this->pending->process($stream);
+                $this->pending->process($stream, $this->events);
 
                 $stream->finish();
+
+                $this->events->call(EventType::StreamedResponse);
             },
             200,
             [
@@ -201,5 +217,12 @@ class Builder implements Responsable, HasZipOptions
     private function resolveModifierCallback(?callable $modify): Closure
     {
         return ($modify ?? static fn ($optionable) => null)(...);
+    }
+
+    public function on(EventType|array $type, callable $handler): static
+    {
+        $this->events->add($type, $handler);
+
+        return $this;
     }
 }
