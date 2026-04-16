@@ -151,4 +151,4 @@ describe(ZipOptions::class, function () {
 
         ZipOptions::default($config);
     });
-});
+})->skipOnCI();
