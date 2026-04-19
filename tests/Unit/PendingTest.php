@@ -82,6 +82,23 @@ describe(Pending::class, function () {
         $pending->add($entry);
     });
 
+    it('does not verify entry if withoutVerification is called', function () {
+        $pending = new Pending();
+        $pending->withoutVerification();
+
+        $entry = Mockery::mock(StreamableToZip::class, Verifiable::class);
+        $entry->shouldReceive('destination')->andReturn('verifiable.txt');
+        $entry->shouldReceive('verify')->never();
+
+        $pending->add($entry);
+    });
+
+    it('withoutVerification returns the same instance', function () {
+        $pending = new Pending();
+
+        expect($pending->withoutVerification())->toBe($pending);
+    });
+
     it('processes directory entries', function () {
         $pending = new Pending();
         $directory = Directory::make('dir1')->comment('dir comment');

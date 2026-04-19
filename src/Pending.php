@@ -19,9 +19,11 @@ class Pending
 
     private bool $stopOnConnectionAborted = false;
 
+    private bool $verify = true;
+
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
     {
-        if ($streamable instanceof Verifiable) {
+        if ($this->verify && $streamable instanceof Verifiable) {
             $streamable->verify();
         }
 
@@ -51,6 +53,13 @@ class Pending
         return $this;
     }
 
+    public function withoutVerification(): static
+    {
+        $this->verify = false;
+
+        return $this;
+    }
+
     /** @noinspection PhpInconsistentReturnPointsInspection */
     public function process(ZipStream $stream, EventQueue $events = new EventQueue()): void
     {
@@ -72,7 +81,7 @@ class Pending
 
             $events->call([
                 EventType::StreamingDirectory,
-                EventType::StreamingToZip
+                EventType::StreamingToZip,
             ], $directory, $options);
 
             $stream->addDirectory(
@@ -110,7 +119,7 @@ class Pending
                 compressionMethod: $options->compressionMethod,
                 deflateLevel: $options->deflateLevel,
                 lastModificationDateTime: $options->lastModified,
-                enableZeroHeader: $options->enableZeroHeader
+                enableZeroHeader: $options->enableZeroHeader,
             );
 
             $events->call([
