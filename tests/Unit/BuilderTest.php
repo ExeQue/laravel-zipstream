@@ -115,6 +115,17 @@ describe(Builder::class, function () {
         expect($exists)->toBeTrue();
     });
 
+    it('can set withoutVerification', function () {
+        $this->builder->withoutVerification();
+
+        $pending = Invader::make($this->builder)->pending;
+        expect(Invader::make($pending)->verify)->toBeFalse();
+    });
+
+    it('withoutVerification returns the same instance', function () {
+        expect($this->builder->withoutVerification())->toBe($this->builder);
+    });
+
     it('can add empty directory', function () {
         $this->builder->emptyDirectory('empty-dir');
 

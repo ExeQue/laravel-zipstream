@@ -64,6 +64,13 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
+    public function withoutVerification(): static
+    {
+        $this->pending->withoutVerification();
+
+        return $this;
+    }
+
     public function add(StreamableToZip|CanStreamToZip|Directory $content, ?callable $modify = null): static
     {
         $modify = $this->resolveModifierCallback($modify);
