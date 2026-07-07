@@ -22,6 +22,11 @@ enum EventType
     case ProcessAborted;
 
     /**
+     * When an exception is thrown while streaming an entry
+     */
+    case ProcessError;
+
+    /**
      * Before a directory is streamed
      */
     case StreamingDirectory;

@@ -122,7 +122,7 @@ class Builder implements Responsable, HasZipOptions
 
         $zipStream = $this->prepareZipStream($output, false);
 
-        $this->pending->process($zipStream);
+        $this->pending->process($zipStream, $this->events);
 
         $zipStream->finish();
 

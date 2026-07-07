@@ -8,6 +8,7 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 
 class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
 {
@@ -35,7 +36,13 @@ class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
      */
     public function stream()
     {
-        return fopen($this->source, 'rb');
+        $stream = fopen($this->source, 'rb');
+
+        if ($stream === false) {
+            FileUnavailableException::forLocal($this);
+        }
+
+        return $stream;
     }
 
     public function verify(): void

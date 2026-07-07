@@ -9,6 +9,7 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 
 covers(LocalFile::class);
 
@@ -71,6 +72,14 @@ describe(LocalFile::class, function () {
         $output = $file->stream();
 
         expect($output)->toBeResource();
+    });
+
+    it('throws FileUnavailableException when fopen fails', function () {
+        $file = LocalFile::make('path/to/missing-file.txt');
+
+        expect(static fn () => @$file->stream())->toThrow(
+            fn (FileUnavailableException $e) => $e->entry === $file
+        );
     });
 
     fileTests(fn () => LocalFile::make(__FILE__));

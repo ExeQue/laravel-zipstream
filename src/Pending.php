@@ -77,23 +77,31 @@ class Pending
                 return false;
             }
 
-            $options = $directory->getFileOptions();
+            try {
+                $options = $directory->getFileOptions();
 
-            $events->call([
-                EventType::StreamingDirectory,
-                EventType::StreamingToZip,
-            ], $directory, $options);
+                $events->call([
+                    EventType::StreamingDirectory,
+                    EventType::StreamingToZip,
+                ], $directory, $options);
 
-            $stream->addDirectory(
-                fileName: $directory->destination(),
-                comment: $options->comment,
-                lastModificationDateTime: $options->lastModified,
-            );
+                $stream->addDirectory(
+                    fileName: $directory->destination(),
+                    comment: $options->comment,
+                    lastModificationDateTime: $options->lastModified,
+                );
 
-            $events->call([
-                EventType::StreamedDirectory,
-                EventType::StreamedToZip,
-            ], $directory, $options);
+                $events->call([
+                    EventType::StreamedDirectory,
+                    EventType::StreamedToZip,
+                ], $directory, $options);
+            } catch (\Throwable $e) {
+                if (!$events->hasHandler(EventType::ProcessError)) {
+                    throw $e;
+                }
+
+                $events->call(EventType::ProcessError, $e);
+            }
         });
 
         $files->each(function (StreamableToZip $file) use ($stream, $events) {
@@ -103,29 +111,37 @@ class Pending
                 return false;
             }
 
-            $options = $file instanceof HasFileOptions
-                ? $file->getFileOptions()
-                : new FileOptions();
+            try {
+                $options = $file instanceof HasFileOptions
+                    ? $file->getFileOptions()
+                    : new FileOptions();
 
-            $events->call([
-                EventType::StreamingFile,
-                EventType::StreamingToZip,
-            ], $file, $options);
+                $events->call([
+                    EventType::StreamingFile,
+                    EventType::StreamingToZip,
+                ], $file, $options);
 
-            $stream->addFileFromCallback(
-                fileName: $file->destination(),
-                callback: fn () => $file->stream(),
-                comment: $options->comment,
-                compressionMethod: $options->compressionMethod,
-                deflateLevel: $options->deflateLevel,
-                lastModificationDateTime: $options->lastModified,
-                enableZeroHeader: $options->enableZeroHeader,
-            );
+                $stream->addFileFromCallback(
+                    fileName: $file->destination(),
+                    callback: fn () => $file->stream(),
+                    comment: $options->comment,
+                    compressionMethod: $options->compressionMethod,
+                    deflateLevel: $options->deflateLevel,
+                    lastModificationDateTime: $options->lastModified,
+                    enableZeroHeader: $options->enableZeroHeader,
+                );
 
-            $events->call([
-                EventType::StreamedFile,
-                EventType::StreamedToZip,
-            ], $file, $options);
+                $events->call([
+                    EventType::StreamedFile,
+                    EventType::StreamedToZip,
+                ], $file, $options);
+            } catch (\Throwable $e) {
+                if (!$events->hasHandler(EventType::ProcessError)) {
+                    throw $e;
+                }
+
+                $events->call(EventType::ProcessError, $e);
+            }
         });
 
         $events->call(EventType::ProcessFinished);

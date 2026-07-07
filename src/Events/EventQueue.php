@@ -18,6 +18,19 @@ class EventQueue
         $this->id = uniqid('zip-', true);
     }
 
+    public function hasHandler(EventType $type, bool $exclusive = false): bool
+    {
+        $types = $exclusive ? [$type] : [EventType::Any, $type];
+
+        foreach ($types as $t) {
+            if (!empty($this->handlers[$t->name])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function add(EventType|array $types, callable $handler): self
     {
         foreach ($this->normalizeEventTypes($types) as $type) {

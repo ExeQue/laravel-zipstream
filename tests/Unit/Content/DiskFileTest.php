@@ -9,6 +9,7 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use Illuminate\Filesystem\LocalFilesystemAdapter;
 use League\Flysystem\Filesystem;
 
@@ -80,6 +81,14 @@ describe(DiskFile::class, function () {
         $file = DiskFile::make($this->disk, 'Unit/Content/DiskFileTest.php');
 
         expect($file->stream())->toBeResource();
+    });
+
+    it('throws FileUnavailableException when the disk cannot open a read stream', function () {
+        $file = DiskFile::make($this->disk, 'path/to/missing-file.txt');
+
+        expect(static fn () => $file->stream())->toThrow(
+            fn (FileUnavailableException $e) => $e->entry === $file
+        );
     });
 
     fileTests(function ($self) {

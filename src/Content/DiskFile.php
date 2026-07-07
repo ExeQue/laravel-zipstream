@@ -8,6 +8,7 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 
 class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
@@ -35,7 +36,13 @@ class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
 
     public function stream()
     {
-        return $this->disk->readStream($this->source);
+        $stream = $this->disk->readStream($this->source);
+
+        if ($stream === null) {
+            FileUnavailableException::forDisk($this);
+        }
+
+        return $stream;
     }
 
     public function verify(): void

@@ -7,6 +7,8 @@ use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
+use ExeQue\ZipStream\Events\EventQueue;
+use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Pending;
 use Tests\Support\Invader;
@@ -187,6 +189,71 @@ describe(Pending::class, function () {
         $entries = Invader::make($pending)->entries;
 
         expect($entries)->toContain($file);
+    });
+
+    it('rethrows an exception from stream() when no ProcessError handler is registered', function () {
+        $pending = new Pending();
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('file.txt');
+        $file->shouldReceive('stream')->andThrow(new RuntimeException('boom'));
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(
+            fn ($fileName, $callback) => $callback(),
+        );
+
+        expect(fn () => $pending->process($stream))->toThrow(RuntimeException::class, 'boom');
+    });
+
+    it('dispatches ProcessError to a registered handler and continues when it does not throw', function () {
+        $pending = new Pending();
+
+        $failing = Mockery::mock(StreamableToZip::class);
+        $failing->shouldReceive('destination')->andReturn('failing.txt');
+        $failing->shouldReceive('stream')->andThrow(new RuntimeException('boom'));
+        $pending->add($failing);
+
+        $ok = Mockery::mock(StreamableToZip::class);
+        $ok->shouldReceive('destination')->andReturn('ok.txt');
+        $ok->shouldReceive('stream')->andReturn('content');
+        $pending->add($ok);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->twice()->andReturnUsing(
+            fn ($fileName, $callback) => $callback(),
+        );
+
+        $events = new EventQueue();
+        $caught = null;
+        $events->add(EventType::ProcessError, function (Throwable $e) use (&$caught) {
+            $caught = $e;
+        });
+
+        $pending->process($stream, $events);
+
+        expect($caught)->toBeInstanceOf(RuntimeException::class)
+            ->and($caught->getMessage())->toBe('boom');
+    });
+
+    it('propagates the exception when the ProcessError handler rethrows', function () {
+        $pending = new Pending();
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('file.txt');
+        $file->shouldReceive('stream')->andThrow(new RuntimeException('boom'));
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(
+            fn ($fileName, $callback) => $callback(),
+        );
+
+        $events = new EventQueue();
+        $events->add(EventType::ProcessError, function (Throwable $e) {
+            throw $e;
+        });
+
+        expect(fn () => $pending->process($stream, $events))->toThrow(RuntimeException::class, 'boom');
     });
 
     it('stops processing when connection is aborted and option enabled', function () {
