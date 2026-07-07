@@ -202,6 +202,48 @@ $content = Zip::fromRaw('a.txt', '...')->output();
 $stream = Zip::fromRaw('a.txt', '...')->output(true);
 ```
 
+## Events
+
+Register handlers via `on()` to observe or react to what happens during streaming.
+
+```php
+use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Facades\Zip;
+
+Zip::as('archive.zip')
+    ->on(EventType::ProcessStarted, fn (string $id) => Log::info("Zip $id started"))
+    ->on([EventType::StreamingFile, EventType::StreamedFile], function ($file, $options, string $id) {
+        // fires before/after each file
+    })
+    ->fromDisk('public', 'images/photo1.jpg')
+    ->toResponse();
+```
+
+`EventType::Any` matches every event. Available types: `ProcessStarted`, `ProcessFinished`, `ProcessAborted`, `ProcessError`, `StreamingDirectory`/`StreamedDirectory`, `StreamingFile`/`StreamedFile`, `StreamingToZip`/`StreamedToZip`, `SavingToDisk`/`SavedToDisk`, `SavingToFilesystem`/`SavedToFilesystem`, `StreamingResponse`/`StreamedResponse`, `Any`.
+
+### Handling Errors
+
+If streaming an entry throws (e.g. a file that disappeared on disk between verification and streaming), the exception is passed to any handler registered for `ProcessError`. If no handler is registered, the exception is simply thrown. A handler is responsible for re-throwing if it wants processing to stop; otherwise, processing continues with the next entry.
+
+```php
+use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+use Throwable;
+
+Zip::as('archive.zip')
+    ->on(EventType::ProcessError, function (Throwable $e, string $id) {
+        if (!$e instanceof FileUnavailableException) {
+            throw $e; // abort on anything unexpected
+        }
+
+        report($e); // log and skip the missing file
+    })
+    ->fromDisk('public', 'images/photo1.jpg')
+    ->toResponse();
+```
+
+`DiskFile::stream()` and `LocalFile::stream()` throw `FileUnavailableException` (carrying the failing `$entry`) if the underlying disk/filesystem fails to open a read stream, even after passing verification.
+
 ## Testing
 
 The package includes a comprehensive test suite. You can run the tests using Pest:
