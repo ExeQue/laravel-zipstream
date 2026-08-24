@@ -24,6 +24,9 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Macroable;
 use Psr\Http\Message\StreamInterface;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use ZipStream\Exception\OverflowException;
+use ZipStream\Exception\SimulationFileUnknownException;
+use ZipStream\OperationMode;
 use ZipStream\ZipStream;
 
 class Builder implements Responsable, HasZipOptions
@@ -34,6 +37,8 @@ class Builder implements Responsable, HasZipOptions
     private string $filename;
 
     private Pending $pending;
+
+    private bool $withContentLength = false;
 
     public function __construct(
         private Factory $filesystemManager,
@@ -67,6 +72,13 @@ class Builder implements Responsable, HasZipOptions
     public function withoutVerification(): static
     {
         $this->pending->withoutVerification();
+
+        return $this;
+    }
+
+    public function withContentLength(bool $enabled = true): static
+    {
+        $this->withContentLength = $enabled;
 
         return $this;
     }
@@ -120,9 +132,9 @@ class Builder implements Responsable, HasZipOptions
     {
         $output = new Stream(fopen('php://temp', 'w+b'));
 
-        $zipStream = $this->prepareZipStream($output, false);
+        $zipStream = $this->prepareZipStream($output);
 
-        $this->pending->process($zipStream, $this->events);
+        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
         $zipStream->finish();
 
@@ -140,9 +152,9 @@ class Builder implements Responsable, HasZipOptions
 
         $stream = new Stream(fopen($path, 'w+b'));
 
-        $zipStream = $this->prepareZipStream($stream, false);
+        $zipStream = $this->prepareZipStream($stream);
 
-        $this->pending->process($zipStream, $this->events);
+        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
         $zipStream->finish();
 
@@ -162,9 +174,9 @@ class Builder implements Responsable, HasZipOptions
         $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
         $stream = new Stream(fopen('php://temp', 'w+b'));
 
-        $zipStream = $this->prepareZipStream($stream, false);
+        $zipStream = $this->prepareZipStream($stream);
 
-        $this->pending->process($zipStream, $this->events);
+        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
         $zipStream->finish();
 
@@ -181,13 +193,19 @@ class Builder implements Responsable, HasZipOptions
         return $size;
     }
 
-    private function prepareZipStream(mixed $outputStream = null, bool $flush = false): ZipStream
-    {
+    private function prepareZipStream(
+        mixed $outputStream = null,
+        OperationMode $operationMode = OperationMode::NORMAL,
+    ): ZipStream {
         $options = $this->getZipOptions();
+
+        // Only the response path writes to php://output, and only it needs to flush.
+        $flush = $outputStream === null;
 
         $outputStream ??= fopen('php://output', 'w+b');
 
         return new ZipStream(
+            operationMode: $operationMode,
             comment: $options->comment,
             outputStream: Utils::streamFor($outputStream),
             defaultCompressionMethod: $options->compressionMethod,
@@ -200,25 +218,55 @@ class Builder implements Responsable, HasZipOptions
 
     public function toResponse($request): StreamedResponse
     {
+        $headers = [
+            'X-Accel-Buffering'   => 'no',
+            'Content-Type'        => 'application/x-zip',
+            'Content-Disposition' => "attachment; filename=\"$this->filename\"",
+        ];
+
+        if ($this->withContentLength && ($size = $this->calculateSize()) !== null) {
+            $headers['Content-Length'] = $size;
+        }
+
         return new StreamedResponse(
             function () {
                 $this->events->call(EventType::StreamingResponse);
 
                 $stream = $this->prepareZipStream();
 
-                $this->pending->process($stream, $this->events);
+                $this->pending->process($stream, $this->events, $this->getZipOptions());
 
                 $stream->finish();
 
                 $this->events->call(EventType::StreamedResponse);
             },
             200,
-            [
-                'X-Accel-Buffering'   => 'no',
-                'Content-Type'        => 'application/x-zip',
-                'Content-Disposition' => "attachment; filename=\"$this->filename\"",
-            ],
+            $headers,
         );
+    }
+
+    /**
+     * Determine the exact archive size without performing any I/O.
+     *
+     * Returns null when a size cannot be known up front - every entry has to use
+     * CompressionMethod::STORE and carry a known exactSize for the simulation to succeed.
+     */
+    private function calculateSize(): ?int
+    {
+        $simulation = $this->prepareZipStream(
+            fopen('php://memory', 'w+b'),
+            OperationMode::SIMULATE_STRICT,
+        );
+
+        try {
+            // A fresh queue fires no user handlers, and - since it has no ProcessError
+            // handler - lets a failed simulation bubble out instead of being swallowed.
+            $this->pending->process($simulation, new EventQueue(), $this->getZipOptions());
+
+            return $simulation->finish();
+        } catch (SimulationFileUnknownException|OverflowException) {
+            return null;
+        }
     }
 
     private function resolveModifierCallback(?callable $modify): Closure

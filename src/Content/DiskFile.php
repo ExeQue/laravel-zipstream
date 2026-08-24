@@ -51,7 +51,9 @@ class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
             FileNotFoundException::forDisk($this->source);
         }
 
-        if (in_array($this->source, $this->disk->allDirectories())) {
+        $directory = dirname($this->source);
+
+        if (in_array($this->source, $this->disk->directories($directory === '.' ? '' : $directory))) {
             FileNotFoundException::forDisk($this->source);
         }
     }

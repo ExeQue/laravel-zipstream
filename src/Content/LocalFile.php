@@ -9,6 +9,7 @@ use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
 use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+use ExeQue\ZipStream\Options\FileOptions;
 
 class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
 {
@@ -50,5 +51,18 @@ class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
         if (!is_file($this->source)) {
             FileNotFoundException::forLocal($this->source);
         }
+    }
+
+    public function getFileOptions(): FileOptions
+    {
+        if ($this->fileOptions->exactSize === null && is_file($this->source)) {
+            $size = filesize($this->source);
+
+            if ($size !== false) {
+                $this->fileOptions->exactSize = $size;
+            }
+        }
+
+        return $this->fileOptions;
     }
 }

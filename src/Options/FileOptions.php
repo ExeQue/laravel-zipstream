@@ -12,7 +12,9 @@ class FileOptions
         public ?CompressionMethod $compressionMethod = null,
         public ?int               $deflateLevel = null,
         public ?DateTimeInterface $lastModified = null,
-        public ?bool              $enableZeroHeader = null
+        public ?bool              $enableZeroHeader = null,
+        public ?int               $maxSize = null,
+        public ?int               $exactSize = null,
     ) {
     }
 }
