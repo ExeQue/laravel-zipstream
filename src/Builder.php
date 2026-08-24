@@ -140,7 +140,15 @@ class Builder implements Responsable, HasZipOptions
 
         $output->rewind();
 
-        return $stream ? $output : $output->getContents();
+        if ($stream) {
+            return $output;
+        }
+
+        $contents = $output->getContents();
+
+        $output->close();
+
+        return $contents;
     }
 
     public function saveToLocal(string $path): ?int
@@ -253,10 +261,8 @@ class Builder implements Responsable, HasZipOptions
      */
     private function calculateSize(): ?int
     {
-        $simulation = $this->prepareZipStream(
-            fopen('php://memory', 'w+b'),
-            OperationMode::SIMULATE_STRICT,
-        );
+        $sink = fopen('php://memory', 'w+b');
+        $simulation = $this->prepareZipStream($sink, OperationMode::SIMULATE_STRICT);
 
         try {
             // A fresh queue fires no user handlers, and - since it has no ProcessError
@@ -266,6 +272,8 @@ class Builder implements Responsable, HasZipOptions
             return $simulation->finish();
         } catch (SimulationFileUnknownException|OverflowException) {
             return null;
+        } finally {
+            fclose($sink);
         }
     }
 

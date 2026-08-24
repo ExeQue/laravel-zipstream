@@ -5,13 +5,14 @@ namespace ExeQue\ZipStream\Content;
 use ExeQue\ZipStream\Concerns\InteractsWithDestination;
 use ExeQue\ZipStream\Concerns\InteractsWithFileOptions;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
+use ExeQue\ZipStream\Contracts\RetainsStream;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\UnsupportedInputException;
 use ExeQue\ZipStream\Options\FileOptions;
 use Psr\Http\Message\StreamInterface;
 
-class Raw implements StreamableToZip, HasFileOptions, Verifiable
+class Raw implements StreamableToZip, HasFileOptions, Verifiable, RetainsStream
 {
     use InteractsWithFileOptions;
     use InteractsWithDestination;

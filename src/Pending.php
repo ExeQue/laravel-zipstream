@@ -5,12 +5,14 @@ namespace ExeQue\ZipStream;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
+use ExeQue\ZipStream\Contracts\RetainsStream;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
 use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
+use Psr\Http\Message\StreamInterface;
 use ZipStream\CompressionMethod;
 use ZipStream\ZipStream;
 
@@ -116,6 +118,8 @@ class Pending
                 return false;
             }
 
+            $opened = null;
+
             try {
                 $options = $file instanceof HasFileOptions
                     ? $file->getFileOptions()
@@ -128,7 +132,9 @@ class Pending
 
                 $stream->addFileFromCallback(
                     fileName: $file->destination(),
-                    callback: fn () => $file->stream(),
+                    callback: function () use ($file, &$opened) {
+                        return $opened = $file->stream();
+                    },
                     comment: $options->comment,
                     compressionMethod: $options->compressionMethod,
                     deflateLevel: $options->deflateLevel,
@@ -148,10 +154,34 @@ class Pending
                 }
 
                 $events->call(EventType::ProcessError, $e);
+            } finally {
+                if (!$file instanceof RetainsStream) {
+                    $this->closeStream($opened);
+                }
             }
         });
 
         $events->call(EventType::ProcessFinished);
+    }
+
+    /**
+     * Release the stream an entry handed us.
+     *
+     * Entries are held for the lifetime of the archive, so an entry that memoises its own
+     * handle keeps it open for every remaining entry - N files means N concurrent handles.
+     * Nothing downstream closes it: zipstream-php never calls fclose().
+     */
+    private function closeStream(mixed $stream): void
+    {
+        if (is_resource($stream)) {
+            fclose($stream);
+
+            return;
+        }
+
+        if ($stream instanceof StreamInterface) {
+            $stream->close();
+        }
     }
 
     /**

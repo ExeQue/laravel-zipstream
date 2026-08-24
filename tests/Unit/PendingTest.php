@@ -283,6 +283,69 @@ describe(Pending::class, function () {
             ->and($errors[0])->toBeInstanceOf(FileSizeIncorrectException::class);
     });
 
+    it('closes the stream an entry hands it', function () {
+        $handle = fopen('php://memory', 'r+b');
+        fwrite($handle, 'content');
+        rewind($handle);
+
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('file.txt');
+        $file->shouldReceive('stream')->andReturn($handle);
+
+        $pending = new Pending();
+        $pending->add($file);
+        $pending->process(new ZipStream(
+            outputStream: fopen('php://memory', 'w+b'),
+            sendHttpHeaders: false,
+        ));
+
+        expect(is_resource($handle))->toBeFalse();
+    });
+
+    it('closes the stream even when the entry fails', function () {
+        $handle = null;
+
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('boom.txt');
+        $file->shouldReceive('stream')->andReturnUsing(function () use (&$handle) {
+            return $handle = fopen('php://memory', 'r+b');
+        });
+
+        $pending = new Pending();
+        $pending->add($file);
+
+        $events = new EventQueue();
+        $events->add(EventType::ProcessError, fn () => null);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(function (...$args) {
+            $args[1]();                       // open the stream, then blow up mid-entry
+
+            throw new RuntimeException('boom');
+        });
+
+        $pending->process($stream, $events);
+
+        expect(is_resource($handle))->toBeFalse();
+    });
+
+    it('leaves a Raw entry\'s caller-owned stream open', function () {
+        $handle = fopen('php://memory', 'r+b');
+        fwrite($handle, 'content');
+        rewind($handle);
+
+        $pending = new Pending();
+        $pending->add(Raw::make('file.txt', $handle));
+        $pending->process(new ZipStream(
+            outputStream: fopen('php://memory', 'w+b'),
+            sendHttpHeaders: false,
+        ));
+
+        expect(is_resource($handle))->toBeTrue();
+
+        fclose($handle);
+    });
+
     it('can handle recursive CanStreamToZip entries', function () {
         $pending = new Pending();
 

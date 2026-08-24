@@ -159,6 +159,50 @@ Zip::store()
 > `CompressionMethod::STORE`. Use `->store()` when you want short-read detection — which is the
 > right choice for already-compressed media anyway.
 
+## Stream Ownership
+
+The package closes the stream an entry hands it, as soon as that entry has been written to the
+archive. `zipstream-php` never calls `fclose()`, and entries are held for the lifetime of the
+archive — so an entry that memoises its own handle would otherwise keep it open for every
+remaining entry. An archive of N files would hold N concurrent file handles or S3 connections.
+
+That means the common implementation is safe to write:
+
+```php
+class Media extends Model implements StreamableToZip
+{
+    private $handle = null;
+
+    public function stream()
+    {
+        return $this->handle ??= Storage::disk($this->disk)->readStream($this->path);
+    }
+}
+```
+
+If `stream()` returns a resource that was opened elsewhere and is still needed afterwards,
+implement `RetainsStream` to keep it open:
+
+```php
+use ExeQue\ZipStream\Contracts\RetainsStream;
+
+class BorrowedHandle implements StreamableToZip, RetainsStream
+{
+    // ...
+}
+```
+
+`Raw` implements it already — its content is supplied by the caller, so the caller keeps
+ownership:
+
+```php
+$handle = fopen('report.csv', 'rb');
+
+Zip::fromRaw('report.csv', $handle)->saveToLocal($path);
+
+fclose($handle); // still yours to close
+```
+
 ## Extending the Builder (Macros)
 
 The `Zip` facade and `Builder` class use the Laravel `Macroable` trait, allowing you to add custom functionality at runtime.
