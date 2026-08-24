@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use ExeQue\ZipStream\Content\Directory;
+use ExeQue\ZipStream\Content\Raw;
 use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
@@ -10,9 +11,11 @@ use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
 use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Options\FileOptions;
+use ExeQue\ZipStream\Options\ZipOptions;
 use ExeQue\ZipStream\Pending;
 use Tests\Support\Invader;
 use ZipStream\CompressionMethod;
+use ZipStream\Exception\FileSizeIncorrectException;
 use ZipStream\ZipStream;
 
 covers(Pending::class);
@@ -170,6 +173,114 @@ describe(Pending::class, function () {
         );
 
         $pending->process($stream);
+    });
+
+    it('forwards size limits for stored entries', function () {
+        $pending = new Pending();
+        $file = Mockery::mock(StreamableToZip::class, HasFileOptions::class);
+        $file->shouldReceive('destination')->andReturn('stored.txt');
+        $file->shouldReceive('stream')->andReturn('content');
+        $file->shouldReceive('getFileOptions')->andReturn(new FileOptions(
+            compressionMethod: CompressionMethod::STORE,
+            maxSize: 100,
+            exactSize: 7,
+        ));
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->with(
+            'stored.txt',
+            Mockery::any(),
+            '',
+            CompressionMethod::STORE,
+            null,
+            null,
+            100,
+            7,
+            null,
+        );
+
+        $pending->process($stream);
+    });
+
+    it('drops size limits for deflated entries', function () {
+        $pending = new Pending();
+        $file = Mockery::mock(StreamableToZip::class, HasFileOptions::class);
+        $file->shouldReceive('destination')->andReturn('deflated.txt');
+        $file->shouldReceive('stream')->andReturn('content');
+        $file->shouldReceive('getFileOptions')->andReturn(new FileOptions(
+            compressionMethod: CompressionMethod::DEFLATE,
+            maxSize: 100,
+            exactSize: 7,
+        ));
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->with(
+            'deflated.txt',
+            Mockery::any(),
+            '',
+            CompressionMethod::DEFLATE,
+            null,
+            null,
+            null,
+            null,
+            null,
+        );
+
+        $pending->process($stream);
+    });
+
+    it('falls back to the archive compression method when deciding on size limits', function () {
+        $pending = new Pending();
+        $file = Mockery::mock(StreamableToZip::class, HasFileOptions::class);
+        $file->shouldReceive('destination')->andReturn('inherited.txt');
+        $file->shouldReceive('stream')->andReturn('content');
+        $file->shouldReceive('getFileOptions')->andReturn(new FileOptions(exactSize: 7));
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->with(
+            'inherited.txt',
+            Mockery::any(),
+            '',
+            null,
+            null,
+            null,
+            null,
+            7,
+            null,
+        );
+
+        $zipOptions = Mockery::mock(ZipOptions::class);
+        $zipOptions->compressionMethod = CompressionMethod::STORE;
+
+        $pending->process($stream, new EventQueue(), $zipOptions);
+    });
+
+    it('routes a short read to ProcessError when exactSize is declared', function () {
+        $pending = new Pending();
+        $file = Raw::make('short.txt', 'content')->store()->exactSize(999);
+        $pending->add($file);
+
+        $zipOptions = Mockery::mock(ZipOptions::class);
+        $zipOptions->compressionMethod = CompressionMethod::STORE;
+
+        $errors = [];
+        $events = new EventQueue();
+        $events->add(EventType::ProcessError, function (Throwable $e) use (&$errors) {
+            $errors[] = $e;
+        });
+
+        $stream = new ZipStream(
+            outputStream: fopen('php://memory', 'w+b'),
+            sendHttpHeaders: false,
+        );
+
+        $pending->process($stream, $events, $zipOptions);
+
+        expect($errors)->toHaveCount(1)
+            ->and($errors[0])->toBeInstanceOf(FileSizeIncorrectException::class);
     });
 
     it('can handle recursive CanStreamToZip entries', function () {

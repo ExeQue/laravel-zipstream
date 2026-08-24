@@ -73,4 +73,21 @@ describe(Raw::class, function () {
     ]);
 
     fileTests(fn () => Raw::make('foo.bar', 'some content'));
+
+    it('defaults exactSize to the string length', function () {
+        expect(Raw::make('a.txt', 'hello')->getFileOptions()->exactSize)->toBe(5);
+    });
+
+    it('leaves exactSize null for non-string content', function () {
+        $resource = fopen('php://memory', 'r+b');
+
+        expect(Raw::make('a.txt', $resource)->getFileOptions()->exactSize)->toBeNull()
+            ->and(Raw::make('a.txt', fn () => 'hello')->getFileOptions()->exactSize)->toBeNull();
+
+        fclose($resource);
+    });
+
+    it('does not override an explicit exactSize', function () {
+        expect(Raw::make('a.txt', 'hello')->exactSize(99)->getFileOptions()->exactSize)->toBe(99);
+    });
 });

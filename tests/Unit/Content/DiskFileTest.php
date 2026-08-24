@@ -71,11 +71,21 @@ describe(DiskFile::class, function () {
             'source' => 'Unit',
             'fail'   => true,
         ],
+        'nested directory'   => [
+            'source' => 'Unit/Content',
+            'fail'   => true,
+        ],
         'existing file'      => [
             'source' => 'Unit/Content/DiskFileTest.php',
             'fail'   => false,
         ],
     ]);
+
+    it('does not resolve a size on its own', function () {
+        $file = DiskFile::make($this->disk, 'Unit/Content/DiskFileTest.php');
+
+        expect($file->getFileOptions()->exactSize)->toBeNull();
+    });
 
     it('returns a stream resource', function () {
         $file = DiskFile::make($this->disk, 'Unit/Content/DiskFileTest.php');

@@ -9,6 +9,7 @@ use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
 use ExeQue\ZipStream\Content\LocalFile;
 use ExeQue\ZipStream\Content\Raw;
+use ExeQue\ZipStream\Events\EventType;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -58,7 +59,7 @@ describe(Builder::class, function () {
     it('can add content from disk', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
         $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('allDirectories')->andReturn([]);
+        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt', 'dest.txt');
@@ -73,7 +74,7 @@ describe(Builder::class, function () {
     it('can add content from disk using default destination', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
         $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('allDirectories')->andReturn([]);
+        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt');
@@ -219,9 +220,7 @@ describe(Builder::class, function () {
 
         $response = $this->builder->toResponse(new Request());
 
-        ob_start();
-        $response->sendContent();
-        $content = ob_get_clean();
+        $content = captureStreamedOutput(fn () => $response->sendContent());
 
         expect($content)->not->toBeEmpty();
 
@@ -235,5 +234,60 @@ describe(Builder::class, function () {
             ->path('hello.txt')
             ->exists()
             ->contains('Hello World!');
+    });
+
+    it('only flushes output on the response path', function () {
+        $invader = Invader::make($this->builder);
+
+        $toOutput = $invader->prepareZipStream();
+        $toStream = $invader->prepareZipStream(fopen('php://memory', 'w+b'));
+
+        expect(Invader::make($toOutput)->flushOutput)->toBeTrue()
+            ->and(Invader::make($toStream)->flushOutput)->toBeFalse();
+    });
+
+    it('omits Content-Length unless asked for it', function () {
+        $this->builder->store()->fromRaw('test.txt', 'content');
+
+        expect($this->builder->toResponse(new Request())->headers->has('Content-Length'))->toBeFalse();
+    });
+
+    it('adds a Content-Length matching the streamed archive', function () {
+        $this->builder
+            ->store()
+            ->withContentLength()
+            ->fromRaw('test.txt', 'content')
+            ->fromLocal(__FILE__, 'builder.php')
+            ->emptyDirectory('empty');
+
+        $response = $this->builder->toResponse(new Request());
+        $content = captureStreamedOutput(fn () => $response->sendContent());
+
+        expect($response->headers->get('Content-Length'))->toBe((string) strlen($content));
+    });
+
+    it('omits Content-Length when a size cannot be known up front', function () {
+        $this->builder
+            ->deflate()
+            ->withContentLength()
+            ->fromRaw('test.txt', 'content');
+
+        expect($this->builder->toResponse(new Request())->headers->has('Content-Length'))->toBeFalse();
+    });
+
+    it('does not fire user event handlers while calculating Content-Length', function () {
+        $fired = [];
+
+        $this->builder
+            ->deflate()
+            ->withContentLength()
+            ->on(EventType::Any, function () use (&$fired) {
+                $fired[] = func_get_args();
+            })
+            ->fromRaw('test.txt', 'content');
+
+        $this->builder->toResponse(new Request());
+
+        expect($fired)->toBeEmpty();
     });
 });

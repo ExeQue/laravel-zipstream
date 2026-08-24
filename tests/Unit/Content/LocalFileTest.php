@@ -83,4 +83,16 @@ describe(LocalFile::class, function () {
     });
 
     fileTests(fn () => LocalFile::make(__FILE__));
+
+    it('defaults exactSize to the file size', function () {
+        expect(LocalFile::make(__FILE__)->getFileOptions()->exactSize)->toBe(filesize(__FILE__));
+    });
+
+    it('leaves exactSize null for a missing file', function () {
+        expect(LocalFile::make(__DIR__ . '/does-not-exist.txt')->getFileOptions()->exactSize)->toBeNull();
+    });
+
+    it('does not override an explicit exactSize', function () {
+        expect(LocalFile::make(__FILE__)->exactSize(99)->getFileOptions()->exactSize)->toBe(99);
+    });
 });

@@ -79,6 +79,20 @@ trait InteractsWithFileOptions
         return $this->zeroHeader(false);
     }
 
+    public function exactSize(?int $size): static
+    {
+        $this->fileOptions->exactSize = $size;
+
+        return $this;
+    }
+
+    public function maxSize(?int $size): static
+    {
+        $this->fileOptions->maxSize = $size;
+
+        return $this;
+    }
+
     public function getFileOptions(): FileOptions
     {
         return $this->fileOptions;

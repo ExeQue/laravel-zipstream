@@ -10,12 +10,14 @@ use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
 use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Options\FileOptions;
+use ExeQue\ZipStream\Options\ZipOptions;
+use ZipStream\CompressionMethod;
 use ZipStream\ZipStream;
 
 class Pending
 {
     /** @var StreamableToZip[]|Directory[] */
-    private array $entries;
+    private array $entries = [];
 
     private bool $stopOnConnectionAborted = false;
 
@@ -61,8 +63,11 @@ class Pending
     }
 
     /** @noinspection PhpInconsistentReturnPointsInspection */
-    public function process(ZipStream $stream, EventQueue $events = new EventQueue()): void
-    {
+    public function process(
+        ZipStream $stream,
+        EventQueue $events = new EventQueue(),
+        ?ZipOptions $zipOptions = null,
+    ): void {
         $entries = collect($this->entries);
 
         $events->call(EventType::ProcessStarted);
@@ -104,7 +109,7 @@ class Pending
             }
         });
 
-        $files->each(function (StreamableToZip $file) use ($stream, $events) {
+        $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions) {
             if ($this->aborted()) {
                 $events->call(EventType::ProcessAborted);
 
@@ -128,6 +133,8 @@ class Pending
                     compressionMethod: $options->compressionMethod,
                     deflateLevel: $options->deflateLevel,
                     lastModificationDateTime: $options->lastModified,
+                    maxSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->maxSize : null,
+                    exactSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->exactSize : null,
                     enableZeroHeader: $options->enableZeroHeader,
                 );
 
@@ -145,6 +152,20 @@ class Pending
         });
 
         $events->call(EventType::ProcessFinished);
+    }
+
+    /**
+     * Size limits are only safe for stored entries.
+     *
+     * With DEFLATE, maxSize/exactSize end zipstream-php's read loop before feof(), so
+     * deflate_add() is never called with ZLIB_FINISH and the buffered compressed tail is
+     * dropped - producing a silently empty entry. See ZipStream\File::readStream().
+     */
+    private function sizeLimitsApply(FileOptions $options, ?ZipOptions $zipOptions): bool
+    {
+        $method = $options->compressionMethod ?? $zipOptions?->compressionMethod;
+
+        return $method === CompressionMethod::STORE;
     }
 
     private function aborted(): bool

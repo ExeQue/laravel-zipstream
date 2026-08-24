@@ -130,6 +130,35 @@ Zip::fromLocal('/path/file.txt', 'file.txt', function (LocalFile $file) {
 });
 ```
 
+### Entry Sizes
+
+Telling the package how large an entry is turns a *silently truncated* file into a catchable
+error. When a remote body (S3, HTTP) dies mid-read, `fread()` returns `''` rather than `false`,
+the read loop simply ends, and the entry is closed as if it were complete. With `exactSize()`
+set, `zipstream-php` throws `FileSizeIncorrectException` instead, which is routed to
+`EventType::ProcessError` (see [Handling Errors](#handling-errors)).
+
+```php
+Zip::store()
+    ->fromDisk('s3', $media->path, $media->name, function (DiskFile $file) use ($media) {
+        $file->exactSize($media->size);
+    });
+```
+
+- `Raw` defaults `exactSize` to `strlen()` when the content is a string.
+- `LocalFile` defaults it to `filesize()`.
+- `DiskFile` has **no** default — resolving it would cost a `HEAD` request per entry. Supply it
+  from your own metadata, as above.
+- `maxSize()` caps how much is read from an entry.
+- Pass `null` to opt out (e.g. a log file that legitimately grows while it is being streamed).
+
+> **Size limits only apply to stored entries.** `zipstream-php` ends its read loop as soon as
+> `exactSize`/`maxSize` is reached, which happens *before* `feof()`, so `deflate_add()` is never
+> called with `ZLIB_FINISH` and the buffered compressed tail is dropped. To avoid producing empty
+> entries, both values are ignored unless the entry's effective compression method is
+> `CompressionMethod::STORE`. Use `->store()` when you want short-read detection — which is the
+> right choice for already-compressed media anyway.
+
 ## Extending the Builder (Macros)
 
 The `Zip` facade and `Builder` class use the Laravel `Macroable` trait, allowing you to add custom functionality at runtime.
@@ -179,6 +208,43 @@ Returns a `Symfony\Component\HttpFoundation\StreamedResponse`.
 return Zip::as('download.zip')
     ->fromDisk('public', 'large-file.mp4')
     ->toResponse();
+```
+
+The response is streamed and flushed as it is produced, so bytes reach the client immediately
+rather than sitting in an output buffer.
+
+#### Content-Length
+
+By default the response is chunked. Opt in to a real `Content-Length` — which lets clients show
+progress and detect a truncated archive — with `withContentLength()`:
+
+```php
+return Zip::as('download.zip')
+    ->store()
+    ->withContentLength()
+    ->fromDisk('s3', $media->path, $media->name, fn (DiskFile $f) => $f->exactSize($media->size))
+    ->toResponse();
+```
+
+The size is computed by replaying the archive in `OperationMode::SIMULATE_STRICT`, which performs
+no I/O at all. It only succeeds when **every** entry uses `CompressionMethod::STORE` *and* has a
+known `exactSize` (see [Entry Sizes](#entry-sizes)). When it cannot be determined, the header is
+silently omitted and the response falls back to chunked.
+
+#### Streaming from S3
+
+Laravel defaults S3 disks to `'stream_reads' => false`. Flysystem then omits `@http.stream`, and
+Guzzle buffers each whole object in memory before `readStream()` returns. Every entry becomes a
+long stall with zero bytes sent — which is exactly what trips `fastcgi_read_timeout` and kills
+large downloads mid-transfer. Enable real streaming on any S3 disk used with this package:
+
+```php
+// config/filesystems.php
+'s3' => [
+    'driver'       => 's3',
+    // ...
+    'stream_reads' => true,
+],
 ```
 
 ### Save to Local Path

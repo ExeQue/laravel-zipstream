@@ -15,3 +15,28 @@ require_once __DIR__ . '/Contracts/FileTests.php';
 
 pest()->extend(Tests\TestCase::class)
     ->in('Feature', 'Unit');
+
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
+
+/**
+ * Capture output written to php://output by a streamed response.
+ *
+ * The buffer is deliberately started without PHP_OUTPUT_HANDLER_FLUSHABLE so that
+ * ZipStream's ob_flush() is skipped and the bytes stay in the buffer for assertion.
+ */
+function captureStreamedOutput(Closure $callback): string
+{
+    ob_start(null, 0, PHP_OUTPUT_HANDLER_CLEANABLE | PHP_OUTPUT_HANDLER_REMOVABLE);
+
+    try {
+        $callback();
+    } finally {
+        $content = ob_get_clean();
+    }
+
+    return $content;
+}
