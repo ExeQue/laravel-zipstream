@@ -179,6 +179,33 @@ describe(Builder::class, function () {
         $output = $this->builder->output(true);
 
         expect($output)->toBeInstanceOf(StreamInterface::class);
+
+        $path = $this->createTestFile();
+        file_put_contents($path, $output->getContents());
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('builds the output stream as it is read', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $output = $this->builder->store()->output(true);
+
+        memory_reset_peak_usage();
+        $baseline = memory_get_usage();
+        $read = 0;
+
+        while (! $output->eof()) {
+            $read += strlen($output->read(256 * 1024));
+        }
+
+        expect($read)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and(memory_get_peak_usage() - $baseline)->toBeLessThan(8 * 1024 * 1024);
     });
 
     it('can save to local path', function () {
@@ -195,13 +222,74 @@ describe(Builder::class, function () {
     });
 
     it('can save to disk', function () {
+        $path = $this->createTestFile();
+
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any());
+        $disk->shouldReceive('writeStream')
+            ->once()
+            ->with('archive.zip', Mockery::any(), ['part_size' => 1024])
+            ->andReturnUsing(fn ($target, $handle) => stream_copy_to_stream($handle, fopen($path, 'w+b')) !== false);
 
         $this->builder->fromRaw('test.txt', 'content');
-        $size = $this->builder->saveToDisk($disk, 'archive.zip');
+        $size = $this->builder->saveToDisk($disk, 'archive.zip', ['part_size' => 1024]);
 
-        expect($size)->toBeGreaterThan(0);
+        expect($size)->toBe(filesize($path));
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('streams to disk without buffering the whole archive', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $peak = null;
+        $read = 0;
+
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) use (&$peak, &$read) {
+            memory_reset_peak_usage();
+            $baseline = memory_get_usage();
+
+            while (! feof($handle)) {
+                $read += strlen(fread($handle, 256 * 1024));
+            }
+
+            $peak = memory_get_peak_usage() - $baseline;
+
+            return true;
+        });
+
+        $size = $this->builder->store()->saveToDisk($disk, 'archive.zip');
+
+        // Bounded by the chunk plus the rewindable head, not by the 64 MB archive.
+        expect($size)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and($read)->toBe($size)
+            ->and($peak)->toBeLessThan(16 * 1024 * 1024);
+    });
+
+    it('rethrows a failure while building and removes the partial archive', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            // Mimic a disk that is not set to throw: the failure is swallowed.
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldReceive('delete')->once()->with('archive.zip');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(\ErrorException::class);
     });
 
     it('can return a response', function () {

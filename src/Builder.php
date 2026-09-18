@@ -3,6 +3,7 @@
 namespace ExeQue\ZipStream;
 
 use Closure;
+use Fiber;
 use ExeQue\ZipStream\Concerns\InteractsWithZipOptions;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
@@ -13,7 +14,10 @@ use ExeQue\ZipStream\Contracts\HasZipOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Events\EventType;
 use ExeQue\ZipStream\Events\EventQueue;
+use GuzzleHttp\Psr7\FnStream;
+use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Stream;
+use GuzzleHttp\Psr7\StreamWrapper;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
@@ -23,7 +27,9 @@ use Illuminate\Support\Facades\File as Filesystem;
 use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Macroable;
 use Psr\Http\Message\StreamInterface;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 use ZipStream\Exception\OverflowException;
 use ZipStream\Exception\SimulationFileUnknownException;
 use ZipStream\OperationMode;
@@ -128,27 +134,14 @@ class Builder implements Responsable, HasZipOptions
         return $this->add(new Directory($directory), $modify);
     }
 
+    /**
+     * The stream is built while it is read: it can be read once, front to back, and is not seekable.
+     */
     public function output(bool $stream = false): string|StreamInterface
     {
-        $output = new Stream(fopen('php://temp', 'w+b'));
+        $archive = $this->lazyArchive();
 
-        $zipStream = $this->prepareZipStream($output);
-
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
-
-        $zipStream->finish();
-
-        $output->rewind();
-
-        if ($stream) {
-            return $output;
-        }
-
-        $contents = $output->getContents();
-
-        $output->close();
-
-        return $contents;
+        return $stream ? $archive : $archive->getContents();
     }
 
     public function saveToLocal(string $path): ?int
@@ -175,30 +168,133 @@ class Builder implements Responsable, HasZipOptions
         return $size;
     }
 
-    public function saveToDisk(string|FilesystemAdapter $disk, string $path): ?int
+    /**
+     * Stream the archive to a disk while it is being built, see lazyArchive().
+     *
+     * @param  array<string, mixed>  $options  Passed on to the disk, e.g. ['part_size' => ...] for S3.
+     */
+    public function saveToDisk(string|FilesystemAdapter $disk, string $path, array $options = []): ?int
     {
         $this->events->call(EventType::SavingToDisk, $disk, $path);
 
         $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-        $stream = new Stream(fopen('php://temp', 'w+b'));
 
-        $zipStream = $this->prepareZipStream($stream);
+        $size = null;
+        $failure = null;
 
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
+        $handle = StreamWrapper::getResource($this->rewindableHead($this->lazyArchive($size, $failure)));
 
-        $zipStream->finish();
+        try {
+            $disk->writeStream($path, $handle, $options);
+        } catch (Throwable $e) {
+            $failure ??= $e;
+        } finally {
+            // A disk may already have closed it through the PSR-7 stream it wrapped it in.
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+        }
 
-        $size = $stream->getSize();
+        if ($failure !== null) {
+            // The disk wraps (or, when not set to throw, swallows) errors raised while reading.
+            // Rethrow the original and don't leave a partial archive behind.
+            $disk->delete($path);
 
-        $fh = $stream->detach();
-
-        $disk->writeStream($path, $fh);
-
-        fclose($fh);
+            throw $failure;
+        }
 
         $this->events->call(EventType::SavedToDisk, $disk, $path, $size);
 
         return $size;
+    }
+
+    /**
+     * A stream that builds the archive as it is read.
+     *
+     * ZipStream pushes its output while readers (Flysystem, the AWS SDK) pull at their own pace. The archive
+     * is produced inside a fiber that the reader drives: every read resumes the fiber just far enough to
+     * supply it, so the archive is never buffered as a whole.
+     *
+     * @param  int|null  $size  Receives the archive size once it has been read to the end.
+     * @param  Throwable|null  $failure  Receives what went wrong while building, before it is rethrown to the reader.
+     */
+    private function lazyArchive(?int &$size = null, ?Throwable &$failure = null): PumpStream
+    {
+        $fiber = new Fiber(function () use (&$size) {
+            $zipStream = $this->prepareZipStream(new FnStream([
+                'isReadable' => fn () => false,
+                'isWritable' => fn () => true,
+                'write'      => function (string $data): int {
+                    Fiber::suspend($data);
+
+                    return strlen($data);
+                },
+            ]));
+
+            $this->pending->process($zipStream, $this->events, $this->getZipOptions());
+
+            $size = $zipStream->finish();
+        });
+
+        return new PumpStream(function () use ($fiber, &$failure) {
+            try {
+                $data = $fiber->isStarted() ? $fiber->resume() : $fiber->start();
+            } catch (Throwable $e) {
+                // Throwing through the read aborts the consumer instead of completing a truncated archive.
+                throw $failure = $e;
+            }
+
+            return $fiber->isTerminated() ? false : $data;
+        });
+    }
+
+    /**
+     * Allow rewinding to the start while no more than the first $limit bytes have been read.
+     *
+     * A userland stream resource always reports itself as seekable, so the AWS SDK reads up to
+     * 5 MB (MultipartUploader::PART_MIN_SIZE) to probe the size of the body and then rewinds.
+     * Remembering that head satisfies it without buffering the rest of the archive.
+     */
+    private function rewindableHead(StreamInterface $stream, int $limit = 6 * 1024 * 1024): StreamInterface
+    {
+        // ponytail: 1 MB of slack over the 5 MB probe covers PHP's read-ahead on the resource.
+        $head = '';
+        $position = 0;
+        $rewindable = true;
+
+        return FnStream::decorate($stream, [
+            'read' => function (int $length) use ($stream, $limit, &$head, &$position, &$rewindable): string {
+                if ($position < strlen($head)) {
+                    $data = substr($head, $position, $length);
+                } else {
+                    $data = $stream->read($length);
+
+                    if ($rewindable && strlen($head) + strlen($data) <= $limit) {
+                        $head .= $data;
+                    } else {
+                        $head = '';
+                        $rewindable = false;
+                    }
+                }
+
+                $position += strlen($data);
+
+                return $data;
+            },
+            'seek' => function (int $offset, int $whence = SEEK_SET) use (&$position, &$rewindable): void {
+                if (! $rewindable || $offset !== 0 || $whence !== SEEK_SET) {
+                    throw new RuntimeException('The archive can only be rewound to the start within its first bytes.');
+                }
+
+                $position = 0;
+            },
+            'tell' => function () use (&$position): int {
+                return $position;
+            },
+            'eof' => function () use ($stream, &$head, &$position): bool {
+                return $position >= strlen($head) && $stream->eof();
+            },
+        ]);
     }
 
     private function prepareZipStream(

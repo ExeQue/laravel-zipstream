@@ -14,6 +14,8 @@ composer require exeque/laravel-zipstream
 
 The service provider will automatically register itself.
 
+Upgrading from 0.x? See the [upgrade guide](UPGRADE.md).
+
 ## Basic Usage
 
 The easiest way to use the library is via the `Zip` facade. You can fluently chain methods to add files and then generate a response or save the ZIP.
@@ -303,6 +305,14 @@ Zip::fromRaw('test.txt', 'content')
     ->saveToDisk('s3', 'backups/today.zip');
 ```
 
+The archive is uploaded while it is built, so it is never buffered locally. Options are passed on to the disk - S3
+caps a multipart upload at 10,000 parts, so raise `part_size` for archives above 50 GB:
+
+```php
+Zip::fromDisk('s3', 'huge.bin')
+    ->saveToDisk('s3', 'backups/huge.zip', ['part_size' => 64 * 1024 * 1024]); // up to 640 GB
+```
+
 ### Get as String or Stream
 ```php
 // Get as string
@@ -311,6 +321,8 @@ $content = Zip::fromRaw('a.txt', '...')->output();
 // Get as PSR-7 Stream
 $stream = Zip::fromRaw('a.txt', '...')->output(true);
 ```
+
+The stream builds the archive as it is read, so it can be read once, front to back, and is not seekable.
 
 ## Events
 
@@ -361,6 +373,9 @@ The package includes a comprehensive test suite. You can run the tests using Pes
 ```bash
 composer test
 ```
+
+The S3 test for `saveToDisk()` is skipped unless an S3-compatible server is available. See
+[Testing against S3 with MinIO](docs/testing-with-minio.md) to run it locally.
 
 ## License
 
