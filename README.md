@@ -14,6 +14,8 @@ composer require exeque/laravel-zipstream
 
 The service provider will automatically register itself.
 
+Upgrading from 0.x? See the [upgrade guide](UPGRADE.md).
+
 ## Basic Usage
 
 The easiest way to use the library is via the `Zip` facade. You can fluently chain methods to add files and then generate a response or save the ZIP.
