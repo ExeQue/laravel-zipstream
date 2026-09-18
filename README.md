@@ -372,6 +372,9 @@ The package includes a comprehensive test suite. You can run the tests using Pes
 composer test
 ```
 
+The S3 test for `saveToDisk()` is skipped unless an S3-compatible server is available. See
+[Testing against S3 with MinIO](docs/testing-with-minio.md) to run it locally.
+
 ## License
 
 The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
