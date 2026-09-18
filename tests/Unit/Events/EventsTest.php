@@ -173,7 +173,8 @@ describe('Event chains via Any listener', function () {
         $config->shouldReceive('get')->andReturnUsing(fn ($k, $d = null) => $d);
 
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any());
+        $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any(), [])
+            ->andReturnUsing(fn ($path, $handle) => stream_get_contents($handle) !== false);
 
         $spy = new EventQueueSpy();
         $builder = new Builder($filesystem, $config, $spy);

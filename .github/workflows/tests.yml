@@ -38,5 +38,13 @@ jobs:
         run: |
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction
 
+      # Service containers can't pass `server /data`, so MinIO is started by hand.
+      - name: Start MinIO
+        run: |
+          docker run -d -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+          timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done'
+
       - name: Execute tests
         run: vendor/bin/pest -p --ci
+        env:
+          ZIPSTREAM_S3_ENDPOINT: http://localhost:9000
