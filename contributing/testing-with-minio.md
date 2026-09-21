@@ -1,3 +1,5 @@
+<!-- For people working on the package itself - see ../README.md -->
+
 # Testing against S3 with MinIO
 
 `tests/Feature/SaveToS3Test.php` runs a real multipart upload through `saveToDisk()` against an S3-compatible

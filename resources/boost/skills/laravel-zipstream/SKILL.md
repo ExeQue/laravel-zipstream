@@ -179,14 +179,12 @@ parameter throws `InvalidEventHandlerException` when registered.
 ### Context
 `$event->context` describes the archive the event belongs to:
 
-| Property | |
-|---|---|
-| `id` | The same value for every event of one archive |
-| `entry` | What is being streamed right now, `null` between entries |
-| `entries` | `Entries`: done, total, percentage(). The total is known before the first byte |
-| `bytes` | `Bytes`: the same, but total and percentage are null unless withKnownSize() was used |
-| `data` | Whatever `withContext()` was given |
-| `entryData()` | The context set on the current entry |
+- `id` - The same value for every event of one archive
+- `entry` - What is being streamed right now, `null` between entries
+- `entries` - `Entries`: done, total, percentage(). The total is known before the first byte
+- `bytes` - `Bytes`: the same, but total and percentage are null unless withKnownSize() was used
+- `data` - Whatever `withContext()` was given
+- `entryData()` - The context set on the current entry
 
 Attach per-entry context where the entry is added, and read it back on any event about it - it saves keeping a
 map from destination back to a record:

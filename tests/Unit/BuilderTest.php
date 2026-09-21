@@ -112,6 +112,13 @@ describe(Builder::class, function () {
 
         expect(Invader::make($shallow)->pending->entries())->toHaveCount(1);
 
+        // An empty destination puts the files at the root of the archive.
+        $root_level = new Builder($this->filesystemManager, $this->config);
+        $root_level->fromLocalDirectory($root, '');
+
+        expect(collect(Invader::make($root_level)->pending->entries())->map(fn ($entry) => $entry->destination())->sort()->values()->all())
+            ->toBe(['a.txt', 'nested/b.txt']);
+
         array_map('unlink', [$root . '/a.txt', $root . '/nested/b.txt']);
         rmdir($root . '/nested');
         rmdir($root);
