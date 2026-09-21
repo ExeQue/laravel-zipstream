@@ -47,6 +47,15 @@ enum EventType
     case StreamedFile;
 
     /**
+     * Every time bytes of the archive itself are written
+     *
+     * Receives the number of bytes just written and the running total. Granularity is PHP's
+     * write size (8 KB), so a handler doing real work should throttle itself. For that reason it
+     * is the one event Any does not cover: register for it directly.
+     */
+    case StreamedBytes;
+
+    /**
      * Before a file or directory is streamed to the zip
      */
     case StreamingToZip;

@@ -19,6 +19,7 @@ use Psr\Http\Message\StreamInterface;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Tests\Support\AssertableZipFile;
 use Tests\Support\Invader;
+use ZipArchive;
 use ZipStream\CompressionMethod;
 
 covers(Builder::class);
@@ -179,6 +180,33 @@ describe(Builder::class, function () {
         $output = $this->builder->output(true);
 
         expect($output)->toBeInstanceOf(StreamInterface::class);
+
+        $path = $this->createTestFile();
+        file_put_contents($path, $output->getContents());
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('builds the output stream as it is read', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $output = $this->builder->store()->output(true);
+
+        memory_reset_peak_usage();
+        $baseline = memory_get_usage();
+        $read = 0;
+
+        while (! $output->eof()) {
+            $read += strlen($output->read(256 * 1024));
+        }
+
+        expect($read)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and(memory_get_peak_usage() - $baseline)->toBeLessThan(8 * 1024 * 1024);
     });
 
     it('can save to local path', function () {
@@ -195,13 +223,203 @@ describe(Builder::class, function () {
     });
 
     it('can save to disk', function () {
+        $path = $this->createTestFile();
+
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any());
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')
+            ->once()
+            ->with('archive.zip', Mockery::any(), ['part_size' => 1024])
+            ->andReturnUsing(fn ($target, $handle) => stream_copy_to_stream($handle, fopen($path, 'w+b')) !== false);
 
         $this->builder->fromRaw('test.txt', 'content');
-        $size = $this->builder->saveToDisk($disk, 'archive.zip');
+        $size = $this->builder->saveToDisk($disk, 'archive.zip', ['part_size' => 1024]);
 
-        expect($size)->toBeGreaterThan(0);
+        expect($size)->toBe(filesize($path));
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('streams to disk without buffering the whole archive', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $peak = null;
+        $read = 0;
+
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) use (&$peak, &$read) {
+            memory_reset_peak_usage();
+            $baseline = memory_get_usage();
+
+            while (! feof($handle)) {
+                $read += strlen(fread($handle, 256 * 1024));
+            }
+
+            $peak = memory_get_peak_usage() - $baseline;
+
+            return true;
+        });
+
+        $size = $this->builder->store()->saveToDisk($disk, 'archive.zip');
+
+        // Bounded by the chunk plus the rewindable head, not by the 64 MB archive.
+        expect($size)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and($read)->toBe($size)
+            ->and($peak)->toBeLessThan(16 * 1024 * 1024);
+    });
+
+    it('rethrows a failure while building and removes the partial archive', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->once()->with('archive.zip')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            // Mimic a disk that is not set to throw: the failure is swallowed.
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldReceive('delete')->once()->with('archive.zip');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(\ErrorException::class);
+    });
+
+    it('keeps a file that was already on the disk when building fails', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->once()->with('archive.zip')->andReturnTrue();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldNotReceive('delete');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(\ErrorException::class);
+    });
+
+    it('reports archive bytes as they are written', function () {
+        $chunks = [];
+
+        $this->builder
+            ->on(EventType::StreamedBytes, function (int $written, int $total) use (&$chunks) {
+                $chunks[] = [$written, $total];
+            })
+            ->fromLocal(__FILE__, 'builder.php');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        expect($chunks)->not->toBeEmpty()
+            ->and(array_sum(array_column($chunks, 0)))->toBe($size)
+            ->and(end($chunks)[1])->toBe($size);
+    });
+
+    it('reports archive bytes on every output path', function (string $path) {
+        $total = 0;
+
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->andReturnUsing(
+            fn ($target, $handle) => stream_get_contents($handle) !== false,
+        );
+
+        $this->builder
+            ->on(EventType::StreamedBytes, function (int $written, int $sofar) use (&$total) {
+                $total = $sofar;
+            })
+            ->fromRaw('test.txt', 'content');
+
+        match ($path) {
+            'output'      => $this->builder->output(),
+            'outputTrue'  => $this->builder->output(true)->getContents(),
+            'saveToLocal' => $this->builder->saveToLocal($this->createTestFile()),
+            'saveToDisk'  => $this->builder->saveToDisk($disk, 'archive.zip'),
+            'toResponse'  => captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent()),
+        };
+
+        expect($total)->toBeGreaterThan(0);
+    })->with(['output', 'outputTrue', 'saveToLocal', 'saveToDisk', 'toResponse']);
+
+    it('does not report archive bytes to an Any handler', function () {
+        $types = [];
+
+        $this->builder
+            ->on(EventType::Any, function (...$args) use (&$types) {
+                $types[] = count($args);
+            })
+            ->fromLocal(__FILE__, 'builder.php')
+            ->saveToLocal($this->createTestFile());
+
+        expect($types)->not->toBeEmpty();
+    });
+
+    it('can be aborted from an event handler', function () {
+        $aborted = false;
+
+        $this->builder
+            ->on(EventType::StreamingFile, function ($file) {
+                if ($file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->on(EventType::ProcessAborted, function () use (&$aborted) {
+                $aborted = true;
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        $path = $this->createTestFile();
+        $this->builder->saveToLocal($path);
+
+        $archive = new ZipArchive();
+        $archive->open($path);
+
+        // The entry being streamed when abort() was called still finishes; the rest is skipped.
+        expect($archive->numFiles)->toBe(2)
+            ->and($archive->getFromName('second.txt'))->toBe('two')
+            ->and($archive->getFromName('third.txt'))->toBeFalse()
+            ->and($aborted)->toBeTrue();
+
+        $archive->close();
+    });
+
+    it('does not warn when the local directory already exists', function () {
+        $path = $this->createTestFile();
+        $warnings = [];
+
+        set_error_handler(function (int $severity, string $message) use (&$warnings) {
+            $warnings[] = $message;
+
+            return true;
+        }, E_WARNING);
+
+        try {
+            $this->builder->fromRaw('test.txt', 'content')->saveToLocal($path);
+        } finally {
+            restore_error_handler();
+        }
+
+        expect($warnings)->toBeEmpty();
     });
 
     it('can return a response', function () {

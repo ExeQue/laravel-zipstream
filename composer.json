@@ -11,7 +11,8 @@
         "pestphp/pest": "^3.8|^4.0",
         "symfony/var-dumper": "^7.2",
         "laravel/pint": "^1.21",
-        "orchestra/testbench": "^10.9"
+        "orchestra/testbench": "^10.9",
+        "league/flysystem-aws-s3-v3": "^3.35"
     },
     "license": "MIT",
     "autoload": {

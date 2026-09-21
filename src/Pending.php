@@ -23,6 +23,8 @@ class Pending
 
     private bool $stopOnConnectionAborted = false;
 
+    private bool $aborted = false;
+
     private bool $verify = true;
 
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
@@ -57,6 +59,19 @@ class Pending
         return $this;
     }
 
+    /**
+     * Stop after the entry being streamed right now.
+     *
+     * Remaining entries are skipped and the archive is finished, so what has been written stays a
+     * valid - if incomplete - zip.
+     */
+    public function abort(): static
+    {
+        $this->aborted = true;
+
+        return $this;
+    }
+
     public function withoutVerification(): static
     {
         $this->verify = false;
@@ -84,31 +99,29 @@ class Pending
                 return false;
             }
 
+            $options = $directory->getFileOptions();
+
+            $events->call([
+                EventType::StreamingDirectory,
+                EventType::StreamingToZip,
+            ], $directory, $options);
+
             try {
-                $options = $directory->getFileOptions();
-
-                $events->call([
-                    EventType::StreamingDirectory,
-                    EventType::StreamingToZip,
-                ], $directory, $options);
-
                 $stream->addDirectory(
                     fileName: $directory->destination(),
                     comment: $options->comment,
                     lastModificationDateTime: $options->lastModified,
                 );
-
-                $events->call([
-                    EventType::StreamedDirectory,
-                    EventType::StreamedToZip,
-                ], $directory, $options);
             } catch (\Throwable $e) {
-                if (!$events->hasHandler(EventType::ProcessError)) {
-                    throw $e;
-                }
+                $this->reportOrThrow($events, $e);
 
-                $events->call(EventType::ProcessError, $e);
+                return null;
             }
+
+            $events->call([
+                EventType::StreamedDirectory,
+                EventType::StreamedToZip,
+            ], $directory, $options);
         });
 
         $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions) {
@@ -130,30 +143,30 @@ class Pending
                     EventType::StreamingToZip,
                 ], $file, $options);
 
-                $stream->addFileFromCallback(
-                    fileName: $file->destination(),
-                    callback: function () use ($file, &$opened) {
-                        return $opened = $file->stream();
-                    },
-                    comment: $options->comment,
-                    compressionMethod: $options->compressionMethod,
-                    deflateLevel: $options->deflateLevel,
-                    lastModificationDateTime: $options->lastModified,
-                    maxSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->maxSize : null,
-                    exactSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->exactSize : null,
-                    enableZeroHeader: $options->enableZeroHeader,
-                );
+                try {
+                    $stream->addFileFromCallback(
+                        fileName: $file->destination(),
+                        callback: function () use ($file, &$opened) {
+                            return $opened = $file->stream();
+                        },
+                        comment: $options->comment,
+                        compressionMethod: $options->compressionMethod,
+                        deflateLevel: $options->deflateLevel,
+                        lastModificationDateTime: $options->lastModified,
+                        maxSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->maxSize : null,
+                        exactSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->exactSize : null,
+                        enableZeroHeader: $options->enableZeroHeader,
+                    );
+                } catch (\Throwable $e) {
+                    $this->reportOrThrow($events, $e);
+
+                    return null;
+                }
 
                 $events->call([
                     EventType::StreamedFile,
                     EventType::StreamedToZip,
                 ], $file, $options);
-            } catch (\Throwable $e) {
-                if (!$events->hasHandler(EventType::ProcessError)) {
-                    throw $e;
-                }
-
-                $events->call(EventType::ProcessError, $e);
             } finally {
                 if (!$file instanceof RetainsStream) {
                     $this->closeStream($opened);
@@ -162,6 +175,21 @@ class Pending
         });
 
         $events->call(EventType::ProcessFinished);
+    }
+
+    /**
+     * Route a failure from streaming an entry to a ProcessError handler, or out to the caller.
+     *
+     * Only the entry itself is covered: an exception from an event handler is the caller's own
+     * code failing, so it keeps bubbling up rather than being reported as a streaming error.
+     */
+    private function reportOrThrow(EventQueue $events, \Throwable $e): void
+    {
+        if (!$events->hasHandler(EventType::ProcessError)) {
+            throw $e;
+        }
+
+        $events->call(EventType::ProcessError, $e);
     }
 
     /**
@@ -200,6 +228,6 @@ class Pending
 
     private function aborted(): bool
     {
-        return $this->stopOnConnectionAborted && connection_aborted();
+        return $this->aborted || ($this->stopOnConnectionAborted && connection_aborted());
     }
 }

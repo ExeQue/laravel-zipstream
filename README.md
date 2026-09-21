@@ -14,6 +14,8 @@ composer require exeque/laravel-zipstream
 
 The service provider will automatically register itself.
 
+Upgrading from 0.x? See the [upgrade guide](UPGRADE.md).
+
 ## Basic Usage
 
 The easiest way to use the library is via the `Zip` facade. You can fluently chain methods to add files and then generate a response or save the ZIP.
@@ -303,6 +305,14 @@ Zip::fromRaw('test.txt', 'content')
     ->saveToDisk('s3', 'backups/today.zip');
 ```
 
+The archive is uploaded while it is built, so it is never buffered locally. Options are passed on to the disk - S3
+caps a multipart upload at 10,000 parts, so raise `part_size` for archives above 50 GB:
+
+```php
+Zip::fromDisk('s3', 'huge.bin')
+    ->saveToDisk('s3', 'backups/huge.zip', ['part_size' => 64 * 1024 * 1024]); // up to 640 GB
+```
+
 ### Get as String or Stream
 ```php
 // Get as string
@@ -311,6 +321,8 @@ $content = Zip::fromRaw('a.txt', '...')->output();
 // Get as PSR-7 Stream
 $stream = Zip::fromRaw('a.txt', '...')->output(true);
 ```
+
+The stream builds the archive as it is read, so it can be read once, front to back, and is not seekable.
 
 ## Events
 
@@ -329,7 +341,48 @@ Zip::as('archive.zip')
     ->toResponse();
 ```
 
-`EventType::Any` matches every event. Available types: `ProcessStarted`, `ProcessFinished`, `ProcessAborted`, `ProcessError`, `StreamingDirectory`/`StreamedDirectory`, `StreamingFile`/`StreamedFile`, `StreamingToZip`/`StreamedToZip`, `SavingToDisk`/`SavedToDisk`, `SavingToFilesystem`/`SavedToFilesystem`, `StreamingResponse`/`StreamedResponse`, `Any`.
+`EventType::Any` matches every event. Available types: `ProcessStarted`, `ProcessFinished`, `ProcessAborted`, `ProcessError`, `StreamingDirectory`/`StreamedDirectory`, `StreamingFile`/`StreamedFile`, `StreamingToZip`/`StreamedToZip`, `StreamedBytes`, `SavingToDisk`/`SavedToDisk`, `SavingToFilesystem`/`SavedToFilesystem`, `StreamingResponse`/`StreamedResponse`, `Any`.
+
+`StreamedBytes` is the one type `Any` does not match, since it fires at PHP's 8 KB write size - see [Progress](#progress).
+
+### Progress
+
+`EventType::StreamedBytes` fires every time bytes of the archive are written, on every destination - response,
+local path or disk. It receives the number of bytes just written and the running total.
+
+```php
+Zip::store()
+    ->on(EventType::StreamedBytes, function (int $written, int $total, string $id) {
+        Cache::put("zip:$id", $total);
+    })
+    ->fromDisk('s3', 'huge.mp4')
+    ->saveToDisk('s3', 'archives/huge.zip');
+```
+
+It counts the archive's own output, not the bytes read from the sources, so a single huge entry still reports
+progress while it is being streamed. Granularity is PHP's write size (8 KB), so throttle a handler that does real
+work. It is the one event `Any` does not cover: register for it directly.
+
+### Stopping Early
+
+`abort()` stops the archive after the entry being streamed right now. Remaining entries are skipped,
+`ProcessAborted` fires and the archive is finished, so what has been written is still a valid - if incomplete -
+zip. It is meant to be called from a handler:
+
+```php
+$zip = Zip::as('archive.zip');
+
+$zip->on(EventType::ProcessError, function (Throwable $e) use ($zip) {
+    report($e);
+
+    $zip->abort(); // give up on the rest of the archive
+})
+    ->fromDisk('public', 'images/photo1.jpg')
+    ->fromDisk('public', 'images/photo2.jpg')
+    ->toResponse();
+```
+
+`stopOnConnectionAborted()` does the same thing when the client hangs up.
 
 ### Handling Errors
 
@@ -354,6 +407,17 @@ Zip::as('archive.zip')
 
 `DiskFile::stream()` and `LocalFile::stream()` throw `FileUnavailableException` (carrying the failing `$entry`) if the underlying disk/filesystem fails to open a read stream, even after passing verification.
 
+`ProcessError` covers the entry itself. An exception thrown by one of your own event handlers is not reported
+there - it keeps bubbling up to the caller. To stop an archive without an exception reaching a response that is
+already writing bytes, call `abort()` instead.
+
+When `saveToDisk()` fails part-way through, it leaves the disk as it found it: the multipart upload is aborted so
+no parts are billed, and the target path is only deleted if this call created it. A file that was already there
+is left alone, which costs one `exists()` call per `saveToDisk()`.
+
+> A disk that writes in place, such as the local one, has already overwritten the previous file by the time the
+> failure happens. Only an S3-style multipart upload keeps the old object intact until it completes.
+
 ## Testing
 
 The package includes a comprehensive test suite. You can run the tests using Pest:
@@ -361,6 +425,9 @@ The package includes a comprehensive test suite. You can run the tests using Pes
 ```bash
 composer test
 ```
+
+The S3 test for `saveToDisk()` is skipped unless an S3-compatible server is available. See
+[Testing against S3 with MinIO](docs/testing-with-minio.md) to run it locally.
 
 ## License
 

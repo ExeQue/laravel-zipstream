@@ -42,6 +42,18 @@ class EventQueue
         return $this;
     }
 
+    /**
+     * Call only the handlers registered for this exact type, skipping the Any handlers.
+     */
+    public function callExclusive(EventType $type, mixed ...$args): void
+    {
+        $args[] = $this->id;
+
+        foreach ($this->handlers[$type->name] ?? [] as $handler) {
+            $handler['handler'](...$args);
+        }
+    }
+
     public function call(EventType|array $types, mixed ...$args): void
     {
         $args[] = $this->id;
