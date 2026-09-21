@@ -92,6 +92,31 @@ describe(Builder::class, function () {
         expect($exists)->toBeTrue();
     });
 
+    it('adds every file under a local directory, sizes included', function () {
+        $root = sys_get_temp_dir() . '/' . uniqid('zipdir');
+        mkdir($root . '/nested', 0777, true);
+        file_put_contents($root . '/a.txt', 'one');
+        file_put_contents($root . '/nested/b.txt', 'two');
+
+        $this->builder->fromLocalDirectory($root, 'files');
+
+        $entries = collect(Invader::make($this->builder)->pending->entries());
+
+        expect($entries->map(fn ($entry) => $entry->destination())->sort()->values()->all())
+            ->toBe(['files/a.txt', 'files/nested/b.txt'])
+            ->and($entries->every(fn ($entry) => $entry->getFileOptions()->exactSize > 0))->toBeTrue();
+
+        // Not recursive: only the top level.
+        $shallow = new Builder($this->filesystemManager, $this->config);
+        $shallow->fromLocalDirectory($root, recursive: false);
+
+        expect(Invader::make($shallow)->pending->entries())->toHaveCount(1);
+
+        array_map('unlink', [$root . '/a.txt', $root . '/nested/b.txt']);
+        rmdir($root . '/nested');
+        rmdir($root);
+    });
+
     it('can add content from local path using default destination', function () {
         $this->builder->fromLocal(__FILE__);
 
@@ -518,6 +543,75 @@ describe(Builder::class, function () {
             ->and($archive->getFromName('second.txt'))->toBe('two')
             ->and($archive->getFromName('third.txt'))->toBeFalse()
             ->and($aborted)->toBeTrue();
+
+        $archive->close();
+    });
+
+    it('discards a local archive it was building', function () {
+        $path = sys_get_temp_dir() . '/' . uniqid('ziptest') . '.zip';
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort(discard: true);
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToLocal($path))->toBeNull()
+            ->and(file_exists($path))->toBeFalse()
+            ->and(glob(sys_get_temp_dir() . '/ziptest*.part'))->toBeEmpty();
+    });
+
+    it('discards an archive it was writing to a disk', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldReceive('delete')->once()->with('archive.zip');
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort(discard: true);
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToDisk($disk, 'archive.zip'))->toBeNull();
+    });
+
+    it('keeps what it wrote when aborting without discarding', function () {
+        $path = $this->createTestFile();
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToLocal($path))->toBeGreaterThan(0);
+
+        $archive = new ZipArchive();
+        $archive->open($path);
+
+        // The entry that was streaming when abort() was called still finishes; the third is skipped.
+        expect($archive->numFiles)->toBe(2);
 
         $archive->close();
     });

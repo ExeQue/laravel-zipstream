@@ -17,6 +17,7 @@ use ExeQue\ZipStream\Events\StreamedDirectory;
 use ExeQue\ZipStream\Events\StreamedFile;
 use ExeQue\ZipStream\Events\StreamingDirectory;
 use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use Psr\Http\Message\StreamInterface;
@@ -32,11 +33,16 @@ class Pending
 
     private bool $aborted = false;
 
+    private bool $discard = false;
+
     private bool $verify = true;
 
-    public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
+    /**
+     * @param  bool  $verify  Pass false for an entry already known to exist, such as one out of a listing.
+     */
+    public function add(StreamableToZip|CanStreamToZip|Directory $streamable, bool $verify = true): static
     {
-        if ($this->verify && $streamable instanceof Verifiable) {
+        if ($verify && $this->verify && $streamable instanceof Verifiable) {
             $streamable->verify();
         }
 
@@ -59,6 +65,16 @@ class Pending
         return $this;
     }
 
+    /**
+     * The entries queued so far, in the order they were added.
+     *
+     * @return array<int, StreamableToZip|Directory>
+     */
+    public function entries(): array
+    {
+        return $this->entries;
+    }
+
     public function stopOnConnectionAborted(): static
     {
         $this->stopOnConnectionAborted = true;
@@ -72,9 +88,10 @@ class Pending
      * Remaining entries are skipped and the archive is finished, so what has been written stays a
      * valid - if incomplete - zip.
      */
-    public function abort(): static
+    public function abort(bool $discard = false): static
     {
         $this->aborted = true;
+        $this->discard = $this->discard || $discard;
 
         return $this;
     }
@@ -94,6 +111,7 @@ class Pending
     ): void {
         // A builder is reusable, so a previous abort must not silently empty the next archive.
         $this->aborted = false;
+        $this->discard = false;
 
         $entries = collect($this->entries);
 
@@ -109,7 +127,7 @@ class Pending
 
         $directories->each(function (Directory $directory) use ($stream, $events, $state) {
             if ($this->aborted()) {
-                $events->dispatch(ProcessAborted::class);
+                $this->stop($events);
 
                 return false;
             }
@@ -140,7 +158,7 @@ class Pending
 
         $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions, $state) {
             if ($this->aborted()) {
-                $events->dispatch(ProcessAborted::class);
+                $this->stop($events);
 
                 return false;
             }
@@ -189,6 +207,19 @@ class Pending
         });
 
         $events->dispatch(ProcessFinished::class);
+    }
+
+    /**
+     * Leave the archive: kept as it stands, or thrown away.
+     */
+    private function stop(EventQueue $events): void
+    {
+        $events->dispatch(ProcessAborted::class);
+
+        if ($this->discard) {
+            // Unwinds past finish(), so the destination never sees a complete archive to keep.
+            throw ArchiveDiscardedException::make();
+        }
     }
 
     /**

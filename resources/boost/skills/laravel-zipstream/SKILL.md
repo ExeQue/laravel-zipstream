@@ -47,6 +47,11 @@ The library supports multiple source types:
 // From a Laravel Disk
 Zip::fromDisk('s3', 'source/path.pdf', 'internal/name.pdf');
 
+// Every file under a prefix or directory - one listing, sizes included, structure kept
+Zip::fromDiskDirectory('s3', 'events/2026/gala', 'gala');
+Zip::fromDiskDirectory('s3', 'thumbnails', recursive: false);
+Zip::fromLocalDirectory('/var/exports/2026', 'exports');
+
 // From a Local File Path
 Zip::fromLocal('/absolute/path/to/file.log', 'logs/app.log');
 
@@ -254,6 +259,23 @@ The application default is `progress_every` in the config. The unit comes from t
 `'PT0.5S'` is not valid ISO 8601 - write sub-second throttles relatively. A number between 1 and 8191 throws
 `InvalidProgressIntervalException`, since `1` reads as one byte when one second was meant.
 
+## Testing an Application's Own Code
+`Zip::fake()` records instead of building, in the shape of `Storage::fake()`:
+
+```php
+Zip::fake();
+
+app(BuildGalleryArchive::class)->execute($event);
+
+Zip::assertAdded('IMG-0001.jpg')
+    ->assertAddedCount(4)
+    ->assertSavedToDisk('archives/gala.zip');
+```
+
+`assertAdded`, `assertNotAdded`, `assertAddedCount`, `assertNothingAdded`, `assertSavedToDisk`,
+`assertSavedToLocal`, `assertStreamed` and `assertNothingSaved`. A faked archive writes nothing, so keep real
+storage for tests about streaming and cleanup.
+
 ## Errors and Stopping Early
 `ProcessError` covers the entry being streamed, not exceptions from your own handlers. Without a handler for it,
 the exception is thrown instead of reported.
@@ -275,5 +297,6 @@ $zip->on(function (ProcessError $event) use ($zip) {
 ```
 
 `abort()` stops after the entry being streamed right now and still finishes the archive, so what was written
-stays a valid zip. Throwing from a handler reaches the caller instead, which is no use once a response has
+stays a valid zip. `abort(discard: true)` throws it away instead - the S3 multipart upload is aborted, a file
+this call created is removed, and saveToDisk()/saveToLocal() return null. Use it for a cancelled download. Throwing from a handler reaches the caller instead, which is no use once a response has
 started writing bytes. `stopOnConnectionAborted()` does the same when the client hangs up.

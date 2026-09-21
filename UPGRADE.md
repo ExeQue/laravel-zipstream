@@ -152,7 +152,8 @@ handler bubbles up to the caller.
 This matters if you cancel an archive by throwing from a handler. It used to work only as long as no
 `ProcessError` handler was registered. It now works either way.
 
-To stop an archive from a handler, call the new `abort()` instead of throwing. Remaining entries are skipped,
+To stop an archive from a handler, call the new `abort()` instead of throwing. `abort(discard: true)` throws the
+archive away rather than finishing it, which is what a cancelled download wants. Remaining entries are skipped,
 `ProcessAborted` fires and the archive is still finished, so what has been written opens as a zip - which
 throwing from a response that is already writing bytes cannot give you:
 
@@ -350,6 +351,31 @@ format.
 
 It sits outside `LifecycleEvent`, because it fires at PHP's write size (8 KB). A handler on the whole lifecycle
 is therefore not flooded by it.
+
+---
+
+### New: whole prefixes, and a known size to go with them
+
+`fromDiskDirectory($disk, $prefix, $destination, $recursive)` and `fromLocalDirectory($path, $destination,
+$recursive)` add every file below a prefix or directory in one pass, with the exact sizes the listing or the walk
+already carries. That is what `withContentLength()` and
+`withKnownSize()` need, so a percentage and a `Content-Length` come for free on the common case of "everything
+under here". On S3 it replaces a request per file.
+
+---
+
+### New: a test double
+
+`Zip::fake()` records what archives would have contained instead of building them, so a test about which entries
+an archive gets needs no storage:
+
+```php
+Zip::fake();
+
+app(BuildGalleryArchive::class)->execute($event);
+
+Zip::assertAdded('IMG-0001.jpg')->assertAddedCount(4)->assertSavedToDisk('archives/gala.zip');
+```
 
 ---
 

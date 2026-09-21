@@ -22,6 +22,7 @@ use ExeQue\ZipStream\Events\SavingToFilesystem;
 use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamedResponse;
 use ExeQue\ZipStream\Events\StreamingResponse;
+use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
 use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use ExeQue\ZipStream\Options\ProgressInterval;
 use Fiber;
@@ -110,6 +111,14 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
+    /**
+     * The queue this archive is built from, for a subclass that needs to look at it.
+     */
+    protected function pending(): Pending
+    {
+        return $this->pending;
+    }
+
     public function as(string $filename): static
     {
         if (preg_match('/[\r\n]/', $filename) === 1) {
@@ -152,12 +161,20 @@ class Builder implements Responsable, HasZipOptions
     /**
      * Stop the archive after the entry being streamed right now.
      *
-     * Meant to be called from an event handler: remaining entries are skipped, ProcessAborted fires and
-     * the archive is finished, so what has been written stays a valid - if incomplete - zip.
+     * Meant to be called from an event handler. Remaining entries are skipped and ProcessAborted fires.
+     * The archive is then finished, so what has been written stays a valid - if incomplete - zip.
+     *
+     * With $discard the archive is thrown away instead: an S3 multipart upload is aborted, a file this
+     * call created is removed, and saveToDisk()/saveToLocal() return null. Use it when the archive is
+     * not wanted at all - a cancelled download - rather than when it is wanted short.
+     *
+     * A response cannot be recalled, so there abort() and abort(discard: true) both simply stop
+     * writing. output() and output(true) have nothing to clean up, and let the discard surface as
+     * ArchiveDiscardedException.
      */
-    public function abort(): static
+    public function abort(bool $discard = false): static
     {
-        $this->pending->abort();
+        $this->pending->abort($discard);
 
         return $this;
     }
@@ -214,12 +231,95 @@ class Builder implements Responsable, HasZipOptions
         return $this->add(DiskFile::make($disk, $source, $destination), $modify);
     }
 
+    /**
+     * Add every file under a prefix, with the sizes the listing already carries.
+     *
+     * One listing instead of a request per file: with exact sizes in hand, withContentLength() and
+     * withKnownSize() work without asking the disk anything further. Entries out of a listing are known
+     * to exist, so they skip verification.
+     *
+     * @param  string|null  $destination  The folder inside the archive. Defaults to the source's own name.
+     * @param  callable(DiskFile): void|null  $modify
+     */
+    public function fromDiskDirectory(
+        string|FilesystemAdapter $disk,
+        string $source,
+        ?string $destination = null,
+        bool $recursive = true,
+        ?callable $modify = null,
+    ): static {
+        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
+
+        $source = trim($source, '/');
+        $destination = trim($destination ?? basename($source), '/');
+        $modify = $this->resolveModifierCallback($modify);
+
+        foreach ($disk->getDriver()->listContents($source, $recursive) as $attributes) {
+            if (!$attributes->isFile()) {
+                continue;
+            }
+
+            $file = DiskFile::make(
+                $disk,
+                $attributes->path(),
+                trim($destination . '/' . Str::after($attributes->path(), $source), '/'),
+            );
+
+            if ($attributes->fileSize() !== null) {
+                $file->exactSize($attributes->fileSize());
+            }
+
+            if ($attributes->lastModified() !== null) {
+                $file->lastModified($attributes->lastModified());
+            }
+
+            $this->pending->add(tap($file, $modify), verify: false);
+        }
+
+        return $this;
+    }
+
     public function fromLocal(
         string $source,
         ?string $destination = null,
         ?callable $modify = null,
     ): static {
         return $this->add(LocalFile::make($source, $destination), $modify);
+    }
+
+    /**
+     * Add every file under a local directory, with the sizes the filesystem already knows.
+     *
+     * The local counterpart of fromDiskDirectory(): one walk, no request per file, and exact sizes
+     * ready for withContentLength() and withKnownSize().
+     *
+     * @param  string|null  $destination  The folder inside the archive. Defaults to the directory's own name.
+     * @param  callable(LocalFile): void|null  $modify
+     */
+    public function fromLocalDirectory(
+        string $source,
+        ?string $destination = null,
+        bool $recursive = true,
+        ?callable $modify = null,
+    ): static {
+        $source = rtrim($source, '/\\');
+        $destination = trim($destination ?? basename($source), '/');
+        $modify = $this->resolveModifierCallback($modify);
+
+        $files = $recursive ? Filesystem::allFiles($source) : Filesystem::files($source);
+
+        foreach ($files as $file) {
+            $entry = LocalFile::make(
+                $file->getPathname(),
+                trim($destination . '/' . str_replace('\\', '/', $file->getRelativePathname()), '/'),
+            );
+
+            $entry->exactSize($file->getSize())->lastModified($file->getMTime());
+
+            $this->pending->add(tap($entry, $modify), verify: false);
+        }
+
+        return $this;
     }
 
     public function fromRaw(
@@ -271,6 +371,9 @@ class Builder implements Responsable, HasZipOptions
 
             $size = $stream->getSize();
             $failed = false;
+        } catch (ArchiveDiscardedException) {
+            // Nothing to keep and nothing to report: the .part file goes in the finally below.
+            return null;
         } finally {
             $stream->close();
 
@@ -326,6 +429,10 @@ class Builder implements Responsable, HasZipOptions
 
         if ($failure !== null) {
             $this->cleanUpFailedWrite($disk, $path, $existed, $client, $upload);
+
+            if ($failure instanceof ArchiveDiscardedException) {
+                return null;
+            }
 
             // The disk wraps (or, when not set to throw, swallows) errors raised while reading.
             throw $failure;
@@ -623,9 +730,14 @@ class Builder implements Responsable, HasZipOptions
 
                 $stream = $this->prepareZipStream();
 
-                $this->pending->process($stream, $this->events, $this->getZipOptions());
+                try {
+                    $this->pending->process($stream, $this->events, $this->getZipOptions());
 
-                $this->finishArchive($stream);
+                    $this->finishArchive($stream);
+                } catch (ArchiveDiscardedException) {
+                    // The bytes already sent cannot be recalled, so stopping is all there is to do.
+                    return;
+                }
 
                 $this->events->dispatch(StreamedResponse::class);
             },

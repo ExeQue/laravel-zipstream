@@ -11,6 +11,7 @@ use ExeQue\ZipStream\Facades\Zip;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use Tests\Support\AssertableZipFile;
+use Tests\Support\Invader;
 
 covers(Builder::class);
 
@@ -81,6 +82,37 @@ it('aborts the multipart upload and keeps the previous object when building fail
 
     expect($dangling)->toBeEmpty()
         ->and($this->disk->get($this->path))->toBe('previous archive');
+});
+
+it('adds a whole prefix from one listing, sizes included', function () {
+    foreach (['a.txt' => 'one', 'nested/b.txt' => 'two', 'nested/deep/c.txt' => 'three'] as $path => $content) {
+        $this->disk->put("source/$path", $content);
+    }
+
+    $zip = Zip::store()->fromDiskDirectory($this->disk, 'source', 'files');
+
+    $entries = Invader::make(Invader::make($zip)->pending)->entries;
+
+    expect($entries)->toHaveCount(3);
+
+    // The listing carries the sizes, so nothing else has to ask for them.
+    foreach ($entries as $entry) {
+        expect($entry->getFileOptions()->exactSize)->toBeGreaterThan(0);
+    }
+
+    $size = $zip->withContentLength()->saveToDisk($this->disk, $this->path);
+
+    $local = $this->createTestFile();
+    file_put_contents($local, $this->disk->get($this->path));
+
+    (new AssertableZipFile($local))
+        ->path('files/a.txt')->contains('one')
+        ->and('files/nested/b.txt')->contains('two')
+        ->and('files/nested/deep/c.txt')->contains('three');
+
+    expect($this->disk->size($this->path))->toBe($size);
+
+    $this->disk->deleteDirectory('source');
 });
 
 it('streams a multipart upload to S3', function () {

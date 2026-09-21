@@ -42,6 +42,22 @@ Zip::fromDisk('s3', 'exports/data.csv');
 Zip::fromDisk('s3', 'exports/data.csv', '2023/report.csv');
 ```
 
+### From a Whole Prefix
+
+```php
+Zip::fromDiskDirectory('s3', 'events/2026/gala', 'gala');       // everything below the prefix
+Zip::fromDiskDirectory('s3', 'thumbnails', recursive: false);   // just the top level
+
+Zip::fromLocalDirectory('/var/exports/2026', 'exports');        // the same, locally
+```
+
+One listing instead of a request per file, and the sizes come with it - so `withContentLength()` and
+`withKnownSize()` work without asking the disk anything further. The folder structure below the prefix is kept,
+and entries out of a listing skip verification, since the listing is proof they exist.
+
+Both keep the folder structure below the source, and both skip verification, since the listing or the walk is
+proof the files are there.
+
 ### From Local Path
 Add files from the local filesystem.
 
@@ -533,6 +549,18 @@ $zip->on(function (ProcessError $event) use ($zip) {
 
 `stopOnConnectionAborted()` does the same thing when the client hangs up.
 
+**`abort(discard: true)`** throws the archive away instead of finishing it - for a cancelled download, where a
+half archive left in a bucket is billed for and could still be handed out:
+
+| | `abort()` | `abort(discard: true)` |
+|---|---|---|
+| `saveToDisk()` | Returns the size of what was written | Aborts the multipart upload, deletes the key if this call created it, returns `null` |
+| `saveToLocal()` | Returns the size of what was written | Removes the file it was building, returns `null` |
+| `toResponse()` | Stops writing | Stops writing - sent bytes cannot be recalled |
+| `output()` | Returns what was written | Throws `ArchiveDiscardedException`, since there is nothing to clean up |
+
+A file that was already at the target path is left alone either way.
+
 ### Handling Errors
 
 If streaming an entry throws (e.g. a file that disappeared on disk between verification and streaming), the exception is passed to any handler registered for `ProcessError`. If no handler is registered, the exception is simply thrown. A handler is responsible for re-throwing if it wants processing to stop; otherwise, processing continues with the next entry.
@@ -567,6 +595,40 @@ left billed.
 
 > A disk that writes in place, such as the local one, has already overwritten the previous file by the time the
 > failure happens. Only an S3-style multipart upload keeps the old object intact until it completes.
+
+## Testing Your Own Code
+
+`Zip::fake()` records what an archive would have contained instead of building it, in the shape of
+`Storage::fake()`. A test about which entries an archive gets then needs no storage at all:
+
+```php
+Zip::fake();
+
+app(BuildGalleryArchive::class)->execute($event);
+
+Zip::assertAdded('IMG-0001.jpg')
+    ->assertNotAdded('IMG-0002.jpg')
+    ->assertAddedCount(4)
+    ->assertSavedToDisk('archives/gala.zip');
+```
+
+| Assertion | |
+|---|---|
+| `assertAdded($destination)` | An entry was added at that path inside an archive |
+| `assertNotAdded($destination)` | It was not |
+| `assertAddedCount($count)` | Entries across every archive built in the test |
+| `assertNothingAdded()` | No entries at all |
+| `assertSavedToDisk($path = null)` | `saveToDisk()` was called, optionally with that path |
+| `assertSavedToLocal($path = null)` | `saveToLocal()` was called |
+| `assertStreamed()` | `toResponse()` was called |
+| `assertNothingSaved()` | Nothing was written or streamed |
+
+`Zip::fake()` returns the recorder, so the same assertions can be called on it. `entries()` on it hands back the
+entry objects themselves, for a test that needs to look at their options.
+
+A faked archive writes nothing: `saveToDisk()` and `saveToLocal()` return 0, `output()` returns an empty string,
+and the response streams nothing. Keep real storage for tests about the streaming and cleanup paths - see
+[Testing against S3 with MinIO](docs/testing-with-minio.md).
 
 ## Testing
 
