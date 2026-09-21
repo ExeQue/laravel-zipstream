@@ -138,7 +138,7 @@ Telling the package how large an entry is turns a *silently truncated* file into
 error. When a remote body (S3, HTTP) dies mid-read, `fread()` returns `''` rather than `false`,
 the read loop simply ends, and the entry is closed as if it were complete. With `exactSize()`
 set, `zipstream-php` throws `FileSizeIncorrectException` instead, which is routed to
-`EventType::ProcessError` (see [Handling Errors](#handling-errors)).
+`ProcessError` (see [Handling Errors](#handling-errors)).
 
 ```php
 Zip::store()
@@ -326,42 +326,85 @@ The stream builds the archive as it is read, so it can be read once, front to ba
 
 ## Events
 
-Register handlers via `on()` to observe or react to what happens during streaming.
+A handler declares what it listens for with its first parameter. There is no event name to pass and nothing to
+keep in sync: the type is the registration.
 
 ```php
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessStarted;
+use ExeQue\ZipStream\Events\StreamedFile;
+use ExeQue\ZipStream\Events\StreamingToZip;
 use ExeQue\ZipStream\Facades\Zip;
 
 Zip::as('archive.zip')
-    ->on(EventType::ProcessStarted, fn (string $id) => Log::info("Zip $id started"))
-    ->on([EventType::StreamingFile, EventType::StreamedFile], function ($file, $options, string $id) {
-        // fires before/after each file
-    })
+    ->on(fn (ProcessStarted $event) => Log::info("Zip {$event->id} started"))
+    ->on(fn (StreamedFile $event) => Log::info("Added {$event->file->destination()}"))
+    ->on(fn (StreamingToZip $event) => $this->touch())          // files and directories
     ->fromDisk('public', 'images/photo1.jpg')
     ->toResponse();
 ```
 
-`EventType::Any` matches every event. Available types: `ProcessStarted`, `ProcessFinished`, `ProcessAborted`, `ProcessError`, `StreamingDirectory`/`StreamedDirectory`, `StreamingFile`/`StreamedFile`, `StreamingToZip`/`StreamedToZip`, `StreamedBytes`, `SavingToDisk`/`SavedToDisk`, `SavingToFilesystem`/`SavedToFilesystem`, `StreamingResponse`/`StreamedResponse`, `Any`.
+A union listens for several at once:
 
-`StreamedBytes` is the one type `Any` does not match, since it fires at PHP's 8 KB write size - see [Progress](#progress).
+```php
+->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$event->path}"))
+```
+
+Every event carries `$id`, the same value for every event of one archive. The rest of its properties are named
+after what they are, so there is no argument order to remember.
+
+### What listens for what
+
+The interfaces are the groups. Listening for one means listening for every event that implements it.
+
+| Interface | Covers |
+|---|---|
+| `Event` | Everything below. |
+| `LifecycleEvent` | Every event except byte progress. This is the one to use for logging. |
+| `StreamingToZip` | `StreamingFile`, `StreamingDirectory` |
+| `StreamedToZip` | `StreamedFile`, `StreamedDirectory` |
+| `ProgressEvent` | `StreamedBytes` |
+
+| Event | Properties | Fires |
+|---|---|---|
+| `ProcessStarted` | - | Before the entries are streamed |
+| `ProcessFinished` | - | After the last entry |
+| `ProcessAborted` | - | After `abort()` or a closed connection |
+| `ProcessError` | `exception` | When streaming an entry throws |
+| `StreamingFile` | `file`, `options` | Before a file entry |
+| `StreamedFile` | `file`, `options` | After a file entry |
+| `StreamingDirectory` | `directory`, `options` | Before a directory entry |
+| `StreamedDirectory` | `directory`, `options` | After a directory entry |
+| `StreamedBytes` | `written`, `total` | Every write of archive bytes |
+| `SavingToDisk` | `disk`, `path` | Before `saveToDisk()` writes |
+| `SavedToDisk` | `disk`, `path`, `size` | After `saveToDisk()` |
+| `SavingToFilesystem` | `path` | Before `saveToLocal()` writes |
+| `SavedToFilesystem` | `path`, `size` | After `saveToLocal()` |
+| `StreamingResponse` | - | Before the response streams |
+| `StreamedResponse` | - | After the response streams |
+
+`StreamedBytes` is deliberately outside `LifecycleEvent`, since it fires at PHP's 8 KB write size - see
+[Progress](#progress). `fn (Event $event)` does include it.
+
+An event is only built when something listens for it, so handlers you don't register cost one array lookup.
 
 ### Progress
 
-`EventType::StreamedBytes` fires every time bytes of the archive are written, on every destination - response,
-local path or disk. It receives the number of bytes just written and the running total.
+`StreamedBytes` fires every time bytes of the archive are written, on every destination - response, local path
+or disk.
 
 ```php
 Zip::store()
-    ->on(EventType::StreamedBytes, function (int $written, int $total, string $id) {
-        Cache::put("zip:$id", $total);
+    ->on(function (StreamedBytes $event) {
+        Cache::put("zip:{$event->id}", $event->total);
     })
     ->fromDisk('s3', 'huge.mp4')
     ->saveToDisk('s3', 'archives/huge.zip');
 ```
 
 It counts the archive's own output, not the bytes read from the sources, so a single huge entry still reports
-progress while it is being streamed. Granularity is PHP's write size (8 KB), so throttle a handler that does real
-work. It is the one event `Any` does not cover: register for it directly.
+progress while it is being streamed. The first bytes are written before the first entry is finished, so a
+counter driven by `StreamedFile` alongside it starts at zero rather than one. Granularity is PHP's write size (8 KB), so throttle a handler that does real
+work - which is why `LifecycleEvent` leaves it out.
 
 ### Stopping Early
 
@@ -372,8 +415,8 @@ zip. It is meant to be called from a handler:
 ```php
 $zip = Zip::as('archive.zip');
 
-$zip->on(EventType::ProcessError, function (Throwable $e) use ($zip) {
-    report($e);
+$zip->on(function (ProcessError $event) use ($zip) {
+    report($event->exception);
 
     $zip->abort(); // give up on the rest of the archive
 })
@@ -389,17 +432,17 @@ $zip->on(EventType::ProcessError, function (Throwable $e) use ($zip) {
 If streaming an entry throws (e.g. a file that disappeared on disk between verification and streaming), the exception is passed to any handler registered for `ProcessError`. If no handler is registered, the exception is simply thrown. A handler is responsible for re-throwing if it wants processing to stop; otherwise, processing continues with the next entry.
 
 ```php
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessError;
 use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use Throwable;
 
 Zip::as('archive.zip')
-    ->on(EventType::ProcessError, function (Throwable $e, string $id) {
-        if (!$e instanceof FileUnavailableException) {
-            throw $e; // abort on anything unexpected
+    ->on(function (ProcessError $event) {
+        if (!$event->exception instanceof FileUnavailableException) {
+            throw $event->exception; // abort on anything unexpected
         }
 
-        report($e); // log and skip the missing file
+        report($event->exception); // log and skip the missing file
     })
     ->fromDisk('public', 'images/photo1.jpg')
     ->toResponse();
@@ -411,9 +454,10 @@ Zip::as('archive.zip')
 there - it keeps bubbling up to the caller. To stop an archive without an exception reaching a response that is
 already writing bytes, call `abort()` instead.
 
-When `saveToDisk()` fails part-way through, it leaves the disk as it found it: the multipart upload is aborted so
-no parts are billed, and the target path is only deleted if this call created it. A file that was already there
-is left alone, which costs one `exists()` call per `saveToDisk()`.
+When `saveToDisk()` or `saveToLocal()` fails part-way through, it leaves the destination as it found it: the
+target path is only deleted if this call created it, so a file that was already there is left alone. That costs
+one `exists()` call per `saveToDisk()`. On S3, `saveToDisk()` also aborts the multipart upload, so no parts are
+left billed.
 
 > A disk that writes in place, such as the local one, has already overwritten the previous file by the time the
 > failure happens. Only an S3-style multipart upload keeps the old object intact until it completes.

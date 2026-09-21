@@ -9,7 +9,13 @@ use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
 use ExeQue\ZipStream\Content\LocalFile;
 use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
+use ExeQue\ZipStream\Events\LifecycleEvent;
+use ExeQue\ZipStream\Events\ProcessAborted;
+use ExeQue\ZipStream\Events\StreamedBytes;
+use ExeQue\ZipStream\Events\StreamingFile;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -59,8 +65,7 @@ describe(Builder::class, function () {
 
     it('can add content from disk', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
+        $disk->shouldReceive('fileExists')->andReturnTrue();
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt', 'dest.txt');
@@ -74,8 +79,7 @@ describe(Builder::class, function () {
 
     it('can add content from disk using default destination', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
+        $disk->shouldReceive('fileExists')->andReturnTrue();
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt');
@@ -293,7 +297,7 @@ describe(Builder::class, function () {
         $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
         unlink($source);
 
-        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(\ErrorException::class);
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(FileUnavailableException::class);
     });
 
     it('keeps a file that was already on the disk when building fails', function () {
@@ -314,15 +318,15 @@ describe(Builder::class, function () {
         $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
         unlink($source);
 
-        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(\ErrorException::class);
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(FileUnavailableException::class);
     });
 
     it('reports archive bytes as they are written', function () {
         $chunks = [];
 
         $this->builder
-            ->on(EventType::StreamedBytes, function (int $written, int $total) use (&$chunks) {
-                $chunks[] = [$written, $total];
+            ->on(function (StreamedBytes $event) use (&$chunks) {
+                $chunks[] = [$event->written, $event->total];
             })
             ->fromLocal(__FILE__, 'builder.php');
 
@@ -343,8 +347,8 @@ describe(Builder::class, function () {
         );
 
         $this->builder
-            ->on(EventType::StreamedBytes, function (int $written, int $sofar) use (&$total) {
-                $total = $sofar;
+            ->on(function (StreamedBytes $event) use (&$total) {
+                $total = $event->total;
             })
             ->fromRaw('test.txt', 'content');
 
@@ -359,12 +363,12 @@ describe(Builder::class, function () {
         expect($total)->toBeGreaterThan(0);
     })->with(['output', 'outputTrue', 'saveToLocal', 'saveToDisk', 'toResponse']);
 
-    it('does not report archive bytes to an Any handler', function () {
+    it('does not report archive bytes to a lifecycle handler', function () {
         $types = [];
 
         $this->builder
-            ->on(EventType::Any, function (...$args) use (&$types) {
-                $types[] = count($args);
+            ->on(function (LifecycleEvent $event) use (&$types) {
+                $types[] = $event::class;
             })
             ->fromLocal(__FILE__, 'builder.php')
             ->saveToLocal($this->createTestFile());
@@ -376,12 +380,12 @@ describe(Builder::class, function () {
         $aborted = false;
 
         $this->builder
-            ->on(EventType::StreamingFile, function ($file) {
-                if ($file->destination() === 'second.txt') {
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
                     $this->builder->abort();
                 }
             })
-            ->on(EventType::ProcessAborted, function () use (&$aborted) {
+            ->on(function (ProcessAborted $event) use (&$aborted) {
                 $aborted = true;
             })
             ->fromRaw('first.txt', 'one')
@@ -422,13 +426,82 @@ describe(Builder::class, function () {
         expect($warnings)->toBeEmpty();
     });
 
+    it('escapes a filename with quotes and non-ascii characters', function () {
+        $this->builder->as('Årsrapport "2026"');
+
+        $disposition = $this->builder->toResponse(null)->headers->get('Content-Disposition');
+
+        expect($disposition)->toContain('filename="Arsrapport \\"2026\\".zip"')
+            ->and($disposition)->toContain("filename*=utf-8''%C3%85rsrapport%20%222026%22.zip");
+    });
+
+    it('rejects a filename containing line breaks', function () {
+        expect(fn () => $this->builder->as("archive.zip\r\nX-Injected: 1"))
+            ->toThrow(InvalidFilenameException::class);
+    });
+
+    it('removes a partial local archive when building fails', function () {
+        $path = sys_get_temp_dir() . '/' . uniqid('ziptest') . '.zip';
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToLocal($path))->toThrow(FileUnavailableException::class)
+            ->and(file_exists($path))->toBeFalse();
+    });
+
+    it('keeps a local file that was already there when building fails', function () {
+        $path = $this->createTestFile();
+        file_put_contents($path, 'previous archive');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToLocal($path))->toThrow(FileUnavailableException::class);
+
+        // Overwritten in place - but not deleted, since this call did not create it.
+        expect(file_exists($path))->toBeTrue();
+    });
+
+    it('builds a full archive again after an abort', function () {
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        $aborted = $this->createTestFile();
+        $this->builder->saveToLocal($aborted);
+
+        $again = $this->createTestFile();
+        $this->builder->saveToLocal($again);
+
+        $first = new ZipArchive();
+        $first->open($aborted);
+        $second = new ZipArchive();
+        $second->open($again);
+
+        // The abort belongs to the run it was called in, not to the builder.
+        expect($first->numFiles)->toBe(2)
+            ->and($second->numFiles)->toBe(2);
+
+        $first->close();
+        $second->close();
+    });
+
     it('can return a response', function () {
         $this->builder->as('test.zip');
         $response = $this->builder->toResponse(null);
 
         expect($response)->toBeInstanceOf(StreamedResponse::class)
-            ->and($response->headers->get('Content-Disposition'))->toBe('attachment; filename="test.zip"')
-            ->and($response->headers->get('Content-Type'))->toBe('application/x-zip');
+            ->and($response->headers->get('Content-Disposition'))->toBe('attachment; filename=test.zip')
+            ->and($response->headers->get('Content-Type'))->toBe('application/zip');
     });
 
     it('streams the content of the response', function () {
@@ -499,8 +572,8 @@ describe(Builder::class, function () {
         $this->builder
             ->deflate()
             ->withContentLength()
-            ->on(EventType::Any, function () use (&$fired) {
-                $fired[] = func_get_args();
+            ->on(function (Event $event) use (&$fired) {
+                $fired[] = $event;
             })
             ->fromRaw('test.txt', 'content');
 

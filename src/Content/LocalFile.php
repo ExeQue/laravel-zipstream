@@ -37,7 +37,8 @@ class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
      */
     public function stream()
     {
-        $stream = fopen($this->source, 'rb');
+        // Suppressed: the false is handled right below, and a warning would become the caller's exception.
+        $stream = @fopen($this->source, 'rb');
 
         if ($stream === false) {
             FileUnavailableException::forLocal($this);

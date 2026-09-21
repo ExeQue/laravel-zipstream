@@ -12,8 +12,16 @@ use ExeQue\ZipStream\Content\Raw;
 use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasZipOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\Event;
 use ExeQue\ZipStream\Events\EventQueue;
+use ExeQue\ZipStream\Events\SavedToDisk;
+use ExeQue\ZipStream\Events\SavedToFilesystem;
+use ExeQue\ZipStream\Events\SavingToDisk;
+use ExeQue\ZipStream\Events\SavingToFilesystem;
+use ExeQue\ZipStream\Events\StreamedBytes;
+use ExeQue\ZipStream\Events\StreamedResponse;
+use ExeQue\ZipStream\Events\StreamingResponse;
+use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Stream;
@@ -28,7 +36,8 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Macroable;
 use Psr\Http\Message\StreamInterface;
 use RuntimeException;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\HeaderUtils;
+use Symfony\Component\HttpFoundation\StreamedResponse as SymfonyStreamedResponse;
 use Throwable;
 use ZipStream\Exception\OverflowException;
 use ZipStream\Exception\SimulationFileUnknownException;
@@ -59,6 +68,10 @@ class Builder implements Responsable, HasZipOptions
 
     public function as(string $filename): static
     {
+        if (preg_match('/[\r\n]/', $filename) === 1) {
+            InvalidFilenameException::forFilename($filename);
+        }
+
         if (Str::of($filename)->lower()->doesntEndWith('.zip')) {
             $filename .= '.zip';
         }
@@ -165,21 +178,32 @@ class Builder implements Responsable, HasZipOptions
         // makeDirectory() warns about a directory that is already there, which a strict error handler turns into an error.
         is_dir($directory) || Filesystem::makeDirectory($directory, 0755, true, true);
 
-        $this->events->call(EventType::SavingToFilesystem, $path);
+        $this->events->dispatch(SavingToFilesystem::class, $path);
 
+        $existed = is_file($path);
         $stream = new Stream(fopen($path, 'w+b'));
+        $failed = true;
 
-        $zipStream = $this->prepareZipStream($stream);
+        try {
+            $zipStream = $this->prepareZipStream($stream);
 
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
+            $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
-        $zipStream->finish();
+            $zipStream->finish();
 
-        $size = $stream->getSize();
+            $size = $stream->getSize();
+            $failed = false;
+        } finally {
+            $stream->close();
 
-        $stream->close();
+            // Only what this call created: half an archive is worse than no archive, but a file
+            // that was already there is not ours to remove.
+            if ($failed && !$existed) {
+                unlink($path);
+            }
+        }
 
-        $this->events->call(EventType::SavedToFilesystem, $path, $size);
+        $this->events->dispatch(SavedToFilesystem::class, $path, $size);
 
         return $size;
     }
@@ -192,9 +216,9 @@ class Builder implements Responsable, HasZipOptions
      */
     public function saveToDisk(string|FilesystemAdapter $disk, string $path, array $options = []): ?int
     {
-        $this->events->call(EventType::SavingToDisk, $disk, $path);
-
         $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
+
+        $this->events->dispatch(SavingToDisk::class, $disk, $path);
 
         // Only an S3 disk hands out a client, and only S3 can leave a multipart upload behind.
         $client = method_exists($disk, 'getClient') ? $disk->getClient() : null;
@@ -229,7 +253,7 @@ class Builder implements Responsable, HasZipOptions
             throw $failure;
         }
 
-        $this->events->call(EventType::SavedToDisk, $disk, $path, $size);
+        $this->events->dispatch(SavedToDisk::class, $disk, $path, $size);
 
         return $size;
     }
@@ -423,7 +447,7 @@ class Builder implements Responsable, HasZipOptions
      */
     private function reportingProgress(StreamInterface $stream): StreamInterface
     {
-        if (! $this->events->hasHandler(EventType::StreamedBytes, exclusive: true)) {
+        if (! $this->events->hasHandlerFor(StreamedBytes::class)) {
             return $stream;
         }
 
@@ -434,28 +458,33 @@ class Builder implements Responsable, HasZipOptions
                 $written = $stream->write($data);
                 $total += $written;
 
-                $this->events->callExclusive(EventType::StreamedBytes, $written, $total);
+                $this->events->dispatch(StreamedBytes::class, $written, $total);
 
                 return $written;
             },
         ]);
     }
 
-    public function toResponse($request): StreamedResponse
+    public function toResponse($request): SymfonyStreamedResponse
     {
         $headers = [
             'X-Accel-Buffering'   => 'no',
-            'Content-Type'        => 'application/x-zip',
-            'Content-Disposition' => "attachment; filename=\"$this->filename\"",
+            'Content-Type'        => 'application/zip',
+            // Quotes and non-ASCII in a filename need escaping and an RFC 6266 fallback.
+            'Content-Disposition' => HeaderUtils::makeDisposition(
+                HeaderUtils::DISPOSITION_ATTACHMENT,
+                $this->filename,
+                Str::ascii($this->filename) ?: 'archive.zip',
+            ),
         ];
 
         if ($this->withContentLength && ($size = $this->calculateSize()) !== null) {
             $headers['Content-Length'] = $size;
         }
 
-        return new StreamedResponse(
+        return new SymfonyStreamedResponse(
             function () {
-                $this->events->call(EventType::StreamingResponse);
+                $this->events->dispatch(StreamingResponse::class);
 
                 $stream = $this->prepareZipStream();
 
@@ -463,7 +492,7 @@ class Builder implements Responsable, HasZipOptions
 
                 $stream->finish();
 
-                $this->events->call(EventType::StreamedResponse);
+                $this->events->dispatch(StreamedResponse::class);
             },
             200,
             $headers,
@@ -499,9 +528,17 @@ class Builder implements Responsable, HasZipOptions
         return ($modify ?? static fn ($optionable) => null)(...);
     }
 
-    public function on(EventType|array $type, callable $handler): static
+    /**
+     * Register an event handler.
+     *
+     * What it listens for is its first parameter: a concrete event, one of the interfaces they are
+     * grouped by, or a union of either.
+     *
+     * @param  callable(Event): void  $handler
+     */
+    public function on(callable $handler): static
     {
-        $this->events->add($type, $handler);
+        $this->events->add($handler);
 
         return $this;
     }

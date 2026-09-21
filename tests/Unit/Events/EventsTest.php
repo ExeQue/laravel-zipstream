@@ -2,30 +2,59 @@
 
 declare(strict_types=1);
 
-use ExeQue\ZipStream\Pending;
 use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\ProcessFinished;
+use ExeQue\ZipStream\Events\ProcessStarted;
+use ExeQue\ZipStream\Events\SavedToDisk;
+use ExeQue\ZipStream\Events\SavedToFilesystem;
+use ExeQue\ZipStream\Events\SavingToDisk;
+use ExeQue\ZipStream\Events\SavingToFilesystem;
+use ExeQue\ZipStream\Events\StreamedDirectory;
+use ExeQue\ZipStream\Events\StreamedFile;
+use ExeQue\ZipStream\Events\StreamedResponse;
+use ExeQue\ZipStream\Events\StreamingDirectory;
+use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Events\StreamingResponse;
+use ExeQue\ZipStream\Options\FileOptions;
+use ExeQue\ZipStream\Pending;
+use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Filesystem\Factory;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Tests\Support\EventQueueSpy;
 use ZipStream\ZipStream;
-use Illuminate\Contracts\Filesystem\Factory;
-use Illuminate\Contracts\Config\Repository;
-use Illuminate\Filesystem\FilesystemAdapter;
-use Mockery;
 
 covers(Pending::class);
 
-describe('Event chains via Any listener', function () {
-    it('pending: directory chain emits events in order and passes expected args (captured via Any)', function () {
-        $pending = new Pending();
-        $dir = Directory::make('dir1')->comment('dir comment');
-        $file = Raw::make('file.txt', 'content');
-        // Add directory then file (directory should stream first)
-        $pending->add($dir);
-        $pending->add($file);
+/** The entry chain every destination wraps its own events around. */
+$entryChain = [
+    ProcessStarted::class,
+    StreamingDirectory::class,
+    StreamedDirectory::class,
+    StreamingFile::class,
+    StreamedFile::class,
+    ProcessFinished::class,
+];
 
-        $spy = new Tests\Support\EventQueueSpy();
+function builderWithSpy(EventQueueSpy $spy): Builder
+{
+    $config = Mockery::mock(Repository::class);
+    $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
+
+    return (new Builder(Mockery::mock(Factory::class), $config, $spy))
+        ->emptyDirectory('dir1')
+        ->fromRaw('hello.txt', 'Hello World!');
+}
+
+describe('Event chains', function () use ($entryChain) {
+    it('emits the entry chain in order, carrying the entry and its options', function () use ($entryChain) {
+        $pending = new Pending();
+        $pending->add(Directory::make('dir1')->comment('dir comment'));
+        $pending->add(Raw::make('file.txt', 'content'));
+
+        $spy = new EventQueueSpy();
 
         $stream = Mockery::mock(ZipStream::class);
         $stream->shouldReceive('addDirectory')->once();
@@ -33,234 +62,96 @@ describe('Event chains via Any listener', function () {
 
         $pending->process($stream, $spy);
 
-        $spy->assertTypes([
-                EventType::ProcessStarted,
-                EventType::StreamingDirectory,
-                EventType::StreamedDirectory,
-                EventType::StreamingFile,
-                EventType::StreamedFile,
-                EventType::ProcessFinished,
-            ])
-            ->assertAt(0, function ($type, ...$args) {
-                // ProcessStarted -> single id arg
-                expect(count($args))->toBe(1)
-                    ->and(is_string($args[0]))->toBeTrue();
+        $spy->assertTypes($entryChain)
+            ->assertAt(1, function (StreamingDirectory $event) {
+                expect($event->directory)->toBeInstanceOf(Directory::class)
+                    ->and($event->options)->toBeInstanceOf(FileOptions::class);
             })
-            ->assertAt(1, function ($type, ...$args) {
-                // StreamingDirectory -> Directory, FileOptions, id
-                expect(count($args))->toBe(3)
-                    ->and($args[0])->toBeInstanceOf(Directory::class)
-                    ->and($args[1])->toBeInstanceOf(\ExeQue\ZipStream\Options\FileOptions::class)
-                    ->and(is_string($args[2]))->toBeTrue();
-            })
-            ->assertAt(3, function ($type, ...$args) {
-                // StreamingFile -> Raw, FileOptions, id
-                expect(count($args))->toBe(3)
-                    ->and($args[0])->toBeInstanceOf(Raw::class)
-                    ->and($args[1])->toBeInstanceOf(\ExeQue\ZipStream\Options\FileOptions::class)
-                    ->and(is_string($args[2]))->toBeTrue();
-            })
-            ->assertAt(5, function ($type, ...$args) {
-                // ProcessFinished
-                expect(count($args))->toBe(1)
-                    ->and(is_string($args[0]))->toBeTrue();
+            ->assertAt(3, function (StreamingFile $event) {
+                expect($event->file)->toBeInstanceOf(Raw::class)
+                    ->and($event->options)->toBeInstanceOf(FileOptions::class);
             });
     });
 
-    it('pending: file chain emits events in order and passes expected args (captured via Any)', function () {
+    it('shares one id across every event of an archive', function () {
         $pending = new Pending();
-        $dir = Directory::make('dir1')->comment('dir comment');
-        $file = Raw::make('file.txt', 'content');
+        $pending->add(Raw::make('file.txt', 'content'));
 
-        // Add directory then file (directory should stream first)
-        $pending->add($dir);
-        $pending->add($file);
-
-        $spy = new Tests\Support\EventQueueSpy();
+        $spy = new EventQueueSpy();
 
         $stream = Mockery::mock(ZipStream::class);
-        $stream->shouldReceive('addDirectory')->once();
         $stream->shouldReceive('addFileFromCallback')->once();
 
         $pending->process($stream, $spy);
 
-        $spy->assertTypes([
-                EventType::ProcessStarted,
-                EventType::StreamingDirectory,
-                EventType::StreamedDirectory,
-                EventType::StreamingFile,
-                EventType::StreamedFile,
-                EventType::ProcessFinished,
-            ])
-            ->assertAt(0, function ($type, ...$args) {
-                expect(count($args))->toBe(1)
-                    ->and(is_string($args[0]))->toBeTrue();
-            })
-            ->assertAt(1, function ($type, ...$args) {
-                expect(count($args))->toBe(3)
-                    ->and($args[0])->toBeInstanceOf(Directory::class)
-                    ->and($args[1])->toBeInstanceOf(\ExeQue\ZipStream\Options\FileOptions::class)
-                    ->and(is_string($args[2]))->toBeTrue();
-            })
-            ->assertAt(3, function ($type, ...$args) {
-                expect(count($args))->toBe(3)
-                    ->and($args[0])->toBeInstanceOf(Raw::class)
-                    ->and($args[1])->toBeInstanceOf(\ExeQue\ZipStream\Options\FileOptions::class)
-                    ->and(is_string($args[2]))->toBeTrue();
-            })
-            ->assertAt(5, function ($type, ...$args) {
-                expect(count($args))->toBe(1)
-                    ->and(is_string($args[0]))->toBeTrue();
-            });
+        $ids = array_map(fn (Event $event) => $event->id, $spy->events());
+
+        expect(array_unique($ids))->toHaveCount(1)
+            ->and($ids[0])->toBe($spy->id());
     });
 
-    it('builder.saveToLocal: emits saving/process/streaming/finished/saved chains and args via Any', function () {
-        $filesystem = Mockery::mock(Factory::class);
-        $config = Mockery::mock(Repository::class);
-        $config->shouldReceive('get')->andReturnUsing(fn ($k, $d = null) => $d);
-
-        $spy = new Tests\Support\EventQueueSpy();
-        $builder = new Builder($filesystem, $config, $spy);
-        // Add directory then file (directory should stream first)
-        $builder->emptyDirectory('dir1');
-        $builder->fromRaw('hello.txt', 'Hello World!');
+    it('wraps the entry chain in the filesystem events', function () use ($entryChain) {
+        $spy = new EventQueueSpy();
+        $builder = builderWithSpy($spy);
 
         $path = $this->createTestFile();
-
-        // also register a no-op to mirror normal usage
-        $builder->on(EventType::Any, fn (...$args) => null);
-
         $size = $builder->saveToLocal($path);
-        expect($size)->toBeGreaterThan(0);
 
-        // Assertions against spy calls: SavingToFilesystem, ProcessStarted, StreamingDirectory, StreamedDirectory, StreamingFile, StreamedFile, ProcessFinished, SavedToFilesystem
-        $spy->assertTypes([
-                EventType::SavingToFilesystem,
-                EventType::ProcessStarted,
-                EventType::StreamingDirectory,
-                EventType::StreamedDirectory,
-                EventType::StreamingFile,
-                EventType::StreamedFile,
-                EventType::ProcessFinished,
-                EventType::SavedToFilesystem,
-            ]);
-
-        // SavingToFilesystem -> first call
-        $spy->assertAt(0, function ($type, ...$args) use ($path) {
-            // SavingToFilesystem call -> args: path, id
-            expect($args[0])->toBe($path)
-                ->and(is_string($args[1]))->toBeTrue();
-        });
-
-        // ProcessStarted -> single id
-        $spy->assertAt(1, function ($type, ...$args) {
-            expect(count($args))->toBe(1)
-                ->and(is_string($args[0]))->toBeTrue();
-        });
-
-        // SavedToFilesystem -> last call
-        $spy->assertAt(7, function ($type, ...$args) use ($path, $size) {
-            // SavedToFilesystem -> args: path, size, id
-            expect($args[0])->toBe($path)
-                ->and($args[1])->toBe($size)
-                ->and(is_string($args[2]))->toBeTrue();
-        });
+        $spy->assertTypes([SavingToFilesystem::class, ...$entryChain, SavedToFilesystem::class])
+            ->assertAt(0, fn (SavingToFilesystem $event) => expect($event->path)->toBe($path))
+            ->assertAt(7, function (SavedToFilesystem $event) use ($path, $size) {
+                expect($event->path)->toBe($path)
+                    ->and($event->size)->toBe($size);
+            });
     });
 
-    it('builder.saveToDisk: emits saving/process/streaming/finished/saved chains and args via Any', function () {
-        $filesystem = Mockery::mock(Factory::class);
-        $config = Mockery::mock(Repository::class);
-        $config->shouldReceive('get')->andReturnUsing(fn ($k, $d = null) => $d);
-
+    it('wraps the entry chain in the disk events', function () use ($entryChain) {
         $disk = Mockery::mock(FilesystemAdapter::class);
         $disk->shouldReceive('exists')->andReturnFalse();
         $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any(), [])
             ->andReturnUsing(fn ($path, $handle) => stream_get_contents($handle) !== false);
 
         $spy = new EventQueueSpy();
-        $builder = new Builder($filesystem, $config, $spy);
-        // Add directory then file (directory should stream first)
-        $builder->emptyDirectory('dir1');
-        $builder->fromRaw('hello.txt', 'Hello World!');
+        $size = builderWithSpy($spy)->saveToDisk($disk, 'archive.zip');
 
-        $builder->on(EventType::Any, fn (...$args) => null);
-
-        $size = $builder->saveToDisk($disk, 'archive.zip');
-        expect($size)->toBeGreaterThan(0);
-
-        // Assert types sequence and basic checks for specific calls
-        $spy->assertTypes([
-            EventType::SavingToDisk,
-            EventType::ProcessStarted,
-            EventType::StreamingDirectory,
-            EventType::StreamedDirectory,
-            EventType::StreamingFile,
-            EventType::StreamedFile,
-            EventType::ProcessFinished,
-            EventType::SavedToDisk,
-        ]);
-
-        // SavingToDisk -> first call
-        $spy->assertAt(0, function ($type, ...$args) {
-            expect(count($args) >= 2)->toBeTrue()
-                ->and($args[1])->toBe('archive.zip')
-                ->and(is_string($args[count($args) - 1]))->toBeTrue();
-        });
-
-        // SavedToDisk -> last call
-        $spy->assertAt(7, function ($type, ...$args) use ($size) {
-            // args: disk, path, size, id
-            expect($args[2])->toBe($size)
-                ->and(is_string($args[3]))->toBeTrue();
-        });
-
-        // Ensure there is a ProcessStarted call with a single string id
-        $spy->assertAt(1, function ($type, ...$args) {
-            expect(count($args))->toBe(1)
-                ->and(is_string($args[0]))->toBeTrue();
-        });
+        $spy->assertTypes([SavingToDisk::class, ...$entryChain, SavedToDisk::class])
+            ->assertAt(0, function (SavingToDisk $event) use ($disk) {
+                expect($event->path)->toBe('archive.zip')
+                    ->and($event->disk)->toBe($disk);
+            })
+            ->assertAt(7, function (SavedToDisk $event) use ($size) {
+                expect($event->size)->toBe($size);
+            });
     });
 
-    it('builder.toResponse: emits streaming/processing/finished chains and args via Any when response is sent', function () {
+    it('announces the disk it resolved, not the name it was given', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()
+            ->andReturnUsing(fn ($path, $handle) => stream_get_contents($handle) !== false);
+
         $filesystem = Mockery::mock(Factory::class);
+        $filesystem->shouldReceive('disk')->with('archives')->andReturn($disk);
+
         $config = Mockery::mock(Repository::class);
-        $config->shouldReceive('get')->andReturnUsing(fn ($k, $d = null) => $d);
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
         $spy = new EventQueueSpy();
-        $builder = new Builder($filesystem, $config, $spy);
-        // Add directory then file (directory should stream first)
-        $builder->emptyDirectory('dir1');
-        $builder->fromRaw('hello.txt', 'Hello World!');
 
-        // register a no-op Any listener to mirror usage
-        $builder->on(EventType::Any, fn (...$args) => null);
+        (new Builder($filesystem, $config, $spy))
+            ->fromRaw('hello.txt', 'Hello World!')
+            ->saveToDisk('archives', 'archive.zip');
 
-        $response = $builder->toResponse(null);
+        $spy->assertAt(0, fn (SavingToDisk $event) => expect($event->disk)->toBe($disk));
+    });
 
-        // Execute the streamed response callback to trigger streaming
-        $response->sendContent();
+    it('wraps the entry chain in the response events', function () use ($entryChain) {
+        $spy = new EventQueueSpy();
 
-        // Expect StreamingResponse -> ProcessStarted -> StreamingDirectory -> StreamedDirectory -> StreamingFile -> StreamedFile -> ProcessFinished -> StreamedResponse
-        $spy->assertTypes([
-            EventType::StreamingResponse,
-            EventType::ProcessStarted,
-            EventType::StreamingDirectory,
-            EventType::StreamedDirectory,
-            EventType::StreamingFile,
-            EventType::StreamedFile,
-            EventType::ProcessFinished,
-            EventType::StreamedResponse,
-        ]);
+        $response = builderWithSpy($spy)->toResponse(null);
 
-        // Basic argument checks
-        $spy->assertAt(0, function ($type, ...$args) {
-            expect(count($args))->toBe(1)
-                ->and(is_string($args[0]))->toBeTrue();
-        });
+        captureStreamedOutput(fn () => $response->sendContent());
 
-        $spy->assertAt(7, function ($type, ...$args) {
-            expect(count($args))->toBe(1)
-                ->and(is_string($args[0]))->toBeTrue();
-        });
+        $spy->assertTypes([StreamingResponse::class, ...$entryChain, StreamedResponse::class]);
     });
 });

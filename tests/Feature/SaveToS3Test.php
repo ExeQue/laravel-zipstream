@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use Aws\S3\S3Client;
-use ErrorException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Facades\Zip;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -75,7 +75,7 @@ it('aborts the multipart upload and keeps the previous object when building fail
     unlink($source);
 
     expect(fn () => $zip->saveToDisk($this->disk, $this->path, ['part_size' => 5 * 1024 * 1024]))
-        ->toThrow(ErrorException::class);
+        ->toThrow(FileUnavailableException::class);
 
     $dangling = $client->listMultipartUploads(['Bucket' => 'zipstream'])->get('Uploads') ?? [];
 

@@ -5,8 +5,8 @@
 1.0 stops `saveToDisk()` and `output(true)` from buffering the whole archive. Both now build the archive while it
 is being read, so memory and temp disk use stay constant no matter how large the archive is.
 
-For most apps upgrading only means changing the version constraint. Read the sections below if you use
-`output(true)`, extend `Builder`, or rely on what happens when `saveToDisk()` fails.
+Events also became objects, which touches every handler you have registered. Read the sections below if you
+use events, `output(true)`, extend `Builder`, or rely on what happens when `saveToDisk()` fails.
 
 ```bash
 composer require exeque/laravel-zipstream:^1.0
@@ -87,6 +87,9 @@ happens, `saveToDisk()`:
 To find out whether the path already existed, `saveToDisk()` calls `exists()` once before writing. On S3 that is
 one extra `HEAD` request per archive.
 
+`saveToLocal()` cleans up the same way, minus the multipart step it has no use for: a partial archive it
+created is removed rather than left looking like a zip.
+
 A disk that writes in place, such as the local one, has already overwritten the previous file by the time the
 failure happens. Only an S3-style multipart upload keeps the old object intact until it completes. If you write
 to a stable key on a local-style disk and need the previous archive to survive, write to a temporary path and
@@ -124,7 +127,7 @@ throwing from a response that is already writing bytes cannot give you:
 ```php
 $zip = Zip::as('archive.zip');
 
-$zip->on(EventType::StreamedFile, function ($file) use ($zip) {
+$zip->on(function (StreamedFile $event) use ($zip) {
     if ($this->cancelled()) {
         $zip->abort();
     }
@@ -134,9 +137,9 @@ $zip->on(EventType::StreamedFile, function ($file) use ($zip) {
 If you'd rather keep the old behaviour, catch inside the handler yourself:
 
 ```php
-->on(EventType::StreamedFile, function ($file) {
+->on(function (StreamedFile $event) {
     try {
-        $this->track($file);
+        $this->track($event->file);
     } catch (Throwable $e) {
         report($e);
     }
@@ -145,13 +148,94 @@ If you'd rather keep the old behaviour, catch inside the handler yourself:
 
 ---
 
+### Events are objects, and a handler declares what it listens for
+
+**Impact: high, if you register any handler**
+
+`EventType` is gone. A handler now type-hints the event it wants, and that type hint *is* the registration:
+
+```php
+// 0.x
+$zip->on(EventType::StreamedFile, function ($file, $options, string $id) {
+    Log::info($file->destination());
+});
+
+// 1.0
+use ExeQue\ZipStream\Events\StreamedFile;
+
+$zip->on(function (StreamedFile $event) {
+    Log::info($event->file->destination());
+});
+```
+
+`on()` takes the handler alone. The event carries `$id` as a property, so it is no longer the last argument, and
+the rest of the payload is named:
+
+| 0.x | 1.0 |
+|---|---|
+| `EventType::ProcessError`, `function (Throwable $e, $id)` | `function (ProcessError $e)` → `$e->exception` |
+| `EventType::StreamingFile`, `function ($file, $options, $id)` | `function (StreamingFile $e)` → `$e->file`, `$e->options` |
+| `EventType::SavedToDisk`, `function ($disk, $path, $size, $id)` | `function (SavedToDisk $e)` → `$e->disk`, `$e->path`, `$e->size` |
+| `EventType::StreamedBytes`, `function ($written, $total, $id)` | `function (StreamedBytes $e)` → `$e->written`, `$e->total` |
+
+Groups are interfaces rather than extra enum cases:
+
+```php
+// 0.x: the pair fired alongside the concrete type
+$zip->on(EventType::StreamedToZip, $handler);
+
+// 1.0: StreamedFile and StreamedDirectory both implement StreamedToZip
+$zip->on(fn (StreamedToZip $event) => ...);
+```
+
+`EventType::Any` becomes `LifecycleEvent`, which is everything except byte progress - the same exclusion `Any`
+had:
+
+```php
+// 0.x
+$zip->on(EventType::Any, fn (...$args) => Log::info(count($args)));
+
+// 1.0
+$zip->on(fn (LifecycleEvent $event) => Log::info($event::class, ['zip' => $event->id]));
+```
+
+Use `Event` instead of `LifecycleEvent` if you do want byte progress in the same handler, and a union to pick
+several:
+
+```php
+$zip->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$event->path}"));
+```
+
+A handler whose first parameter is missing or isn't an event type now throws `InvalidEventHandlerException` when
+you register it, rather than never firing. The README lists every event, its properties and the interfaces it
+belongs to.
+
+---
+
+### The response headers changed
+
+**Impact: low**
+
+`Content-Type` is now `application/zip`, the registered IANA type, rather than the unregistered
+`application/x-zip`. `Content-Disposition` is built with Symfony's `HeaderUtils::makeDisposition()`, so a
+filename with quotes or non-ASCII characters is escaped and carries an RFC 6266 `filename*` fallback:
+
+```
+attachment; filename="Arsrapport \"2026\".zip"; filename*=utf-8''%C3%85rsrapport%20%222026%22.zip
+```
+
+A plain name is no longer quoted - `attachment; filename=archive.zip` - which matters if you assert on the
+header. `as()` now throws `InvalidFilenameException` for a name containing CR or LF.
+
+---
+
 ### New: byte progress
 
-`EventType::StreamedBytes` fires as the archive is written, on every destination, with the number of bytes just
-written and the running total. See the README for an example.
+`StreamedBytes` fires as the archive is written, on every destination, carrying the bytes just written and the
+running total. See the README for an example.
 
-It is the one event `Any` does not cover, because it fires at PHP's write size (8 KB). An existing `Any` handler
-is therefore unaffected.
+It sits outside `LifecycleEvent`, because it fires at PHP's write size (8 KB). A handler on the whole lifecycle
+is therefore not flooded by it.
 
 ---
 
@@ -195,6 +279,21 @@ starts.
 They also run inside a PHP `Fiber`. This only matters if a handler suspends fibers itself, for example through an
 async runtime such as Revolt or Amp. Such a handler would suspend the archive build instead. Keep handlers
 synchronous.
+
+---
+
+### Verifying a disk entry costs one request instead of two
+
+**Impact: low**
+
+`DiskFile::verify()` used to call `exists()` and then list `directories()` of the parent to rule out a directory
+masquerading as a file. It now calls `fileExists()`, which answers both in one request - on S3 that halves the
+requests made before a byte is read, and a 500 file archive drops from 1000 to 500.
+
+`DiskFile::make()` now takes an `Illuminate\Filesystem\FilesystemAdapter` rather than the
+`Illuminate\Contracts\Filesystem\Filesystem` contract, since `fileExists()` lives on the adapter.
+`Storage::disk()` returns one, so `fromDisk()` is unaffected. Only code constructing `DiskFile` with a custom
+`Filesystem` implementation has to change.
 
 ---
 

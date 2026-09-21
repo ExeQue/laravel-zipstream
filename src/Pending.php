@@ -9,7 +9,14 @@ use ExeQue\ZipStream\Contracts\RetainsStream;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessAborted;
+use ExeQue\ZipStream\Events\ProcessError;
+use ExeQue\ZipStream\Events\ProcessFinished;
+use ExeQue\ZipStream\Events\ProcessStarted;
+use ExeQue\ZipStream\Events\StreamedDirectory;
+use ExeQue\ZipStream\Events\StreamedFile;
+use ExeQue\ZipStream\Events\StreamingDirectory;
+use ExeQue\ZipStream\Events\StreamingFile;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use Psr\Http\Message\StreamInterface;
@@ -85,26 +92,26 @@ class Pending
         EventQueue $events = new EventQueue(),
         ?ZipOptions $zipOptions = null,
     ): void {
+        // A builder is reusable, so a previous abort must not silently empty the next archive.
+        $this->aborted = false;
+
         $entries = collect($this->entries);
 
-        $events->call(EventType::ProcessStarted);
+        $events->dispatch(ProcessStarted::class);
 
         $directories = $entries->filter(fn ($entry) => $entry instanceof Directory);
         $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
 
         $directories->each(function (Directory $directory) use ($stream, $events) {
             if ($this->aborted()) {
-                $events->call(EventType::ProcessAborted);
+                $events->dispatch(ProcessAborted::class);
 
                 return false;
             }
 
             $options = $directory->getFileOptions();
 
-            $events->call([
-                EventType::StreamingDirectory,
-                EventType::StreamingToZip,
-            ], $directory, $options);
+            $events->dispatch(StreamingDirectory::class, $directory, $options);
 
             try {
                 $stream->addDirectory(
@@ -118,15 +125,12 @@ class Pending
                 return null;
             }
 
-            $events->call([
-                EventType::StreamedDirectory,
-                EventType::StreamedToZip,
-            ], $directory, $options);
+            $events->dispatch(StreamedDirectory::class, $directory, $options);
         });
 
         $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions) {
             if ($this->aborted()) {
-                $events->call(EventType::ProcessAborted);
+                $events->dispatch(ProcessAborted::class);
 
                 return false;
             }
@@ -138,10 +142,7 @@ class Pending
                     ? $file->getFileOptions()
                     : new FileOptions();
 
-                $events->call([
-                    EventType::StreamingFile,
-                    EventType::StreamingToZip,
-                ], $file, $options);
+                $events->dispatch(StreamingFile::class, $file, $options);
 
                 try {
                     $stream->addFileFromCallback(
@@ -163,10 +164,7 @@ class Pending
                     return null;
                 }
 
-                $events->call([
-                    EventType::StreamedFile,
-                    EventType::StreamedToZip,
-                ], $file, $options);
+                $events->dispatch(StreamedFile::class, $file, $options);
             } finally {
                 if (!$file instanceof RetainsStream) {
                     $this->closeStream($opened);
@@ -174,7 +172,7 @@ class Pending
             }
         });
 
-        $events->call(EventType::ProcessFinished);
+        $events->dispatch(ProcessFinished::class);
     }
 
     /**
@@ -185,11 +183,11 @@ class Pending
      */
     private function reportOrThrow(EventQueue $events, \Throwable $e): void
     {
-        if (!$events->hasHandler(EventType::ProcessError)) {
+        if (!$events->hasHandlerFor(ProcessError::class)) {
             throw $e;
         }
 
-        $events->call(EventType::ProcessError, $e);
+        $events->dispatch(ProcessError::class, $e);
     }
 
     /**

@@ -20,8 +20,8 @@ it('can stream a zip response from a route', function () {
     $response = $this->get('/download-zip');
 
     $response->assertStatus(200)
-        ->assertHeader('Content-Type', 'application/x-zip')
-        ->assertHeader('Content-Disposition', 'attachment; filename="feature-test.zip"');
+        ->assertHeader('Content-Type', 'application/zip')
+        ->assertHeader('Content-Disposition', 'attachment; filename=feature-test.zip');
 
     // To verify content, we need to capture the streamed output
     $content = captureStreamedOutput(fn () => $response->baseResponse->sendContent());
@@ -48,7 +48,7 @@ it('sends a Content-Length that matches the streamed archive', function () {
 
     $response = $this->get('/download-sized-zip');
 
-    $response->assertStatus(200)->assertHeader('Content-Type', 'application/x-zip');
+    $response->assertStatus(200)->assertHeader('Content-Type', 'application/zip');
 
     $content = captureStreamedOutput(fn () => $response->baseResponse->sendContent());
 

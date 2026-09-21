@@ -9,7 +9,8 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessError;
+use ExeQue\ZipStream\Events\StreamedFile;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use ExeQue\ZipStream\Pending;
@@ -268,8 +269,8 @@ describe(Pending::class, function () {
 
         $errors = [];
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, function (Throwable $e) use (&$errors) {
-            $errors[] = $e;
+        $events->add(function (ProcessError $event) use (&$errors) {
+            $errors[] = $event->exception;
         });
 
         $stream = new ZipStream(
@@ -315,7 +316,7 @@ describe(Pending::class, function () {
         $pending->add($file);
 
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, fn () => null);
+        $events->add(fn (ProcessError $event) => null);
 
         $stream = Mockery::mock(ZipStream::class);
         $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(function (...$args) {
@@ -396,10 +397,10 @@ describe(Pending::class, function () {
         $reported = [];
 
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, function (\Throwable $e) use (&$reported) {
-            $reported[] = $e;
+        $events->add(function (ProcessError $event) use (&$reported) {
+            $reported[] = $event->exception;
         });
-        $events->add(EventType::StreamedFile, function () {
+        $events->add(function (StreamedFile $event) {
             // Cancelling from a handler has to reach the caller, not be swallowed as a streaming error.
             throw new RuntimeException('cancelled');
         });
@@ -428,8 +429,8 @@ describe(Pending::class, function () {
 
         $events = new EventQueue();
         $caught = null;
-        $events->add(EventType::ProcessError, function (Throwable $e) use (&$caught) {
-            $caught = $e;
+        $events->add(function (ProcessError $event) use (&$caught) {
+            $caught = $event->exception;
         });
 
         $pending->process($stream, $events);
@@ -451,8 +452,8 @@ describe(Pending::class, function () {
         );
 
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, function (Throwable $e) {
-            throw $e;
+        $events->add(function (ProcessError $event) {
+            throw $event->exception;
         });
 
         expect(fn () => $pending->process($stream, $events))->toThrow(RuntimeException::class, 'boom');
