@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace ExeQue\ZipStream\Exceptions;
 
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
 use InvalidArgumentException;
 
 class InvalidEventHandlerException extends InvalidArgumentException implements ZipStreamExceptionInterface

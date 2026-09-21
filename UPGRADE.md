@@ -12,6 +12,20 @@ is being read, so memory and temp disk use stay constant no matter how large the
 Events also became objects, which touches every handler you have registered. Read the sections below if you
 use events, `output(true)`, extend `Builder`, or rely on what happens when `saveToDisk()` fails.
 
+Everything that breaks, in one list:
+
+| What | Where |
+|---|---|
+| `output(true)` is read-once and not seekable | [read-once stream](#outputtrue-returns-a-read-once-stream) |
+| A failed `saveToDisk()` aborts the upload and cleans up the path | [cleans up after itself](#a-failed-savetodisk-cleans-up-after-itself) |
+| `ProcessError` no longer catches your handlers' exceptions | [ProcessError](#processerror-no-longer-catches-exceptions-from-your-event-handlers) |
+| `EventType` is gone; handlers declare what they listen for | [events are objects](#events-are-objects-and-a-handler-declares-what-it-listens-for) |
+| `$event->id` is `$event->context->id`, and `StreamedBytes` lost `total` | [context](#context-on-every-event-and-streamedbytes-without-its-total) |
+| Event interfaces moved to `Events\Contracts` | [namespace](#the-events-namespace-has-subfolders) |
+| `Content-Type` is `application/zip`, and a plain filename is unquoted | [headers](#the-response-headers-changed) |
+| `saveToDisk()` takes `$options`, which breaks an override | [$options](#savetodisk-has-a-new-options-parameter) |
+| `DiskFile::make()` takes a `FilesystemAdapter` | [verification](#verifying-a-disk-entry-costs-one-request-instead-of-two) |
+
 ```bash
 composer require exeque/laravel-zipstream:^1.0
 ```
@@ -186,12 +200,13 @@ $zip->on(function (StreamedFile $event) {
 });
 ```
 
-`on()` takes the handler alone. The event carries `$id` as a property, so it is no longer the last argument, and
-the rest of the payload is named:
+`on()` takes the handler alone. The event carries a `$context` describing the archive, so the id is no longer the
+last argument, and the rest of the payload is named:
 
 | 0.x | 1.0 |
 |---|---|
 | `EventType::ProcessError`, `function (Throwable $e, $id)` | `function (ProcessError $e)` → `$e->exception` |
+| `$id` as the last argument | `$e->context->id` |
 | `EventType::StreamingFile`, `function ($file, $options, $id)` | `function (StreamingFile $e)` → `$e->file`, `$e->options` |
 | `EventType::SavedToDisk`, `function ($disk, $path, $size, $id)` | `function (SavedToDisk $e)` → `$e->disk`, `$e->path`, `$e->size` |
 | `EventType::StreamedBytes`, `function ($written, $total, $id)` | `function (StreamedBytes $e)` → `$e->written`, `$e->total` |
@@ -214,7 +229,7 @@ had:
 $zip->on(EventType::Any, fn (...$args) => Log::info(count($args)));
 
 // 1.0
-$zip->on(fn (LifecycleEvent $event) => Log::info($event::class, ['zip' => $event->id]));
+$zip->on(fn (LifecycleEvent $event) => Log::info($event::class, ['zip' => $event->context->id]));
 ```
 
 Use `Event` instead of `LifecycleEvent` if you do want byte progress in the same handler, and a union to pick
@@ -227,6 +242,81 @@ $zip->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$even
 A handler whose first parameter is missing or isn't an event type now throws `InvalidEventHandlerException` when
 you register it, rather than never firing. The README lists every event, its properties and the interfaces it
 belongs to.
+
+---
+
+### Context on every event, and `StreamedBytes` without its total
+
+**Impact: high, if you register any handler**
+
+`$event->context` carries the archive id, the entry being streamed right now, how far along it is in entries and
+in bytes, and whatever `withContext()` was given. `StreamedBytes` keeps only `written` - the bytes since the
+previous report - because the running total lives on the context now:
+
+```php
+// 0.x had no context; 1.0 before this change
+$zip->on(fn (StreamedBytes $event) => Cache::put("zip:{$event->id}", $event->total));
+
+// 1.0
+$zip->on(function (StreamedBytes $event) {
+    $context = $event->context;
+
+    Cache::put("zip:{$context->id}", [
+        'file'    => $context->entry?->destination(),
+        'files'   => "{$context->entries->done}/{$context->entries->total}",
+        'bytes'   => $context->bytes->done,
+        'percent' => $context->bytes->percentage(),   // null unless the size is known
+    ]);
+});
+```
+
+| Was | Is |
+|---|---|
+| `$event->id` | `$event->context->id` |
+| `$event->total` on `StreamedBytes` | `$event->context->bytes->done` |
+| - | `$event->context->entries->done` / `->total` |
+| - | `$event->context->bytes->total`, null unless `withKnownSize()` |
+| - | `$event->context->entry`, null between entries |
+
+`entries` is an `Entries` and `bytes` a `Bytes`, both with `done`, `total`, `percentage()` and
+`isComplete()`. An entry total is always known; a byte total is null unless asked for. The context
+is a frozen snapshot taken when the event was dispatched, so a handler can keep it, and nothing a handler does
+reaches back into the archive.
+
+A byte total means knowing the archive size before writing it, which only holds when every entry is stored with
+a known `exactSize`. `withKnownSize()` asks for it and `withContentLength()` implies it; without either,
+`bytes->total` is null.
+
+#### Per-entry context
+
+Entries take their own context, handed back on every event about them, which replaces keeping a map from
+destination back to a record:
+
+```php
+$zip->fromDisk('s3', $media->path, $media->name, fn (DiskFile $file) => $file->context(['media' => $media->id]));
+
+$zip->on(fn (ProcessError $event) => Log::error('Entry failed', $event->context->entryData()));
+```
+
+---
+
+### The `Events` namespace has subfolders
+
+**Impact: high, if you type-hint an interface or the context**
+
+The events themselves stay at the root of `ExeQue\ZipStream\Events`. What moved:
+
+| Was | Is |
+|---|---|
+| `Events\Event` | `Events\Contracts\Event` |
+| `Events\LifecycleEvent` | `Events\Contracts\LifecycleEvent` |
+| `Events\ProgressEvent` | `Events\Contracts\ProgressEvent` |
+| `Events\StreamingToZip` | `Events\Contracts\StreamingToZip` |
+| `Events\StreamedToZip` | `Events\Contracts\StreamedToZip` |
+| - | `Events\Data\Context`, `Events\Data\Entries`, `Events\Data\Bytes` |
+
+A handler type-hinting a concrete event is unaffected. One type-hinting `LifecycleEvent` needs its import
+changed.
 
 ---
 
@@ -250,7 +340,7 @@ header. `as()` now throws `InvalidFilenameException` for a name containing CR or
 ### New: byte progress
 
 `StreamedBytes` fires as the archive is written, on every destination, carrying the bytes since the previous
-event and the running total. See the README for an example.
+report. The archive so far is on its context - see above. The README has an example.
 
 It is throttled: an event is dispatched at most once per second, and the last one always carries the finished
 size. Change it per archive with `progressEveryBytes()` or `progressEveryInterval()`, or for the application

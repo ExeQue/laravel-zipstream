@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace ExeQue\ZipStream\Events;
+namespace ExeQue\ZipStream\Events\Contracts;
 
 /**
  * A step of the archive: it starts, entries are streamed, it is saved.

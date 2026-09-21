@@ -162,17 +162,42 @@ use ExeQue\ZipStream\Events\StreamedFile;
 
 Zip::as('archive.zip')
     ->on(fn (StreamedFile $event) => Log::info("Added {$event->file->destination()}"))
-    ->on(fn (StreamedBytes $event) => Cache::put("zip:{$event->id}", $event->total))
+    ->on(fn (StreamedBytes $event) => Cache::put("zip:{$event->context->id}", $event->total))
     ->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$event->path}"))
     ->fromDisk('public', 'images/photo1.jpg')
     ->saveToDisk('s3', 'archive.zip');
 ```
 
-Every event carries `$id`, the same value for every event of one archive. A union listens for several at once. A
-handler with no type-hinted first parameter throws `InvalidEventHandlerException` when registered.
+Every event carries a `$context`. A union listens for several at once. A handler with no type-hinted first
+parameter throws `InvalidEventHandlerException` when registered.
+
+### Context
+`$event->context` describes the archive the event belongs to:
+
+| Property | |
+|---|---|
+| `id` | The same value for every event of one archive |
+| `entry` | What is being streamed right now, `null` between entries |
+| `entries` | `Entries`: done, total, percentage(). The total is known before the first byte |
+| `bytes` | `Bytes`: the same, but total and percentage are null unless withKnownSize() was used |
+| `data` | Whatever `withContext()` was given |
+| `entryData()` | The context set on the current entry |
+
+Attach per-entry context where the entry is added, and read it back on any event about it - it saves keeping a
+map from destination back to a record:
+
+```php
+$zip->fromDisk('s3', $media->path, $media->name, fn (DiskFile $f) => $f->context(['media' => $media->id]));
+
+$zip->on(fn (ProcessError $e) => Log::error('Entry failed', $e->context->entryData()));
+```
+
+One object per archive, updated as work happens: keep the value you need, not the object.
 
 ### Interfaces
-Listening for an interface means listening for every event implementing it.
+Listening for an interface means listening for every event implementing it. They live in
+`ExeQue\ZipStream\Events\Contracts`, the events themselves in `ExeQue\ZipStream\Events`, and `Context` and
+`Entries`/`Bytes` in `ExeQue\ZipStream\Events\Data`.
 
 | Interface | Covers |
 |---|---|

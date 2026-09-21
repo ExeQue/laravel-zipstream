@@ -2,9 +2,9 @@
 
 namespace Tests\Support;
 
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
 use ExeQue\ZipStream\Events\EventQueue as BaseEventQueue;
-use ExeQue\ZipStream\Events\LifecycleEvent;
 
 class EventQueueSpy extends BaseEventQueue
 {

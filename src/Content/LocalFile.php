@@ -2,8 +2,10 @@
 
 namespace ExeQue\ZipStream\Content;
 
+use ExeQue\ZipStream\Concerns\InteractsWithContext;
 use ExeQue\ZipStream\Concerns\InteractsWithDestination;
 use ExeQue\ZipStream\Concerns\InteractsWithFileOptions;
+use ExeQue\ZipStream\Contracts\HasContext;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
@@ -11,9 +13,10 @@ use ExeQue\ZipStream\Exceptions\FileNotFoundException;
 use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use ExeQue\ZipStream\Options\FileOptions;
 
-class LocalFile implements StreamableToZip, HasFileOptions, Verifiable
+class LocalFile implements HasContext, StreamableToZip, HasFileOptions, Verifiable
 {
     use InteractsWithFileOptions;
+    use InteractsWithContext;
     use InteractsWithDestination;
 
     private function __construct(

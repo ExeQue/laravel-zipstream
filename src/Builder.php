@@ -4,7 +4,6 @@ namespace ExeQue\ZipStream;
 
 use Closure;
 use DateInterval;
-use Fiber;
 use ExeQue\ZipStream\Concerns\InteractsWithZipOptions;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
@@ -13,7 +12,8 @@ use ExeQue\ZipStream\Content\Raw;
 use ExeQue\ZipStream\Contracts\CanStreamToZip;
 use ExeQue\ZipStream\Contracts\HasZipOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Data\Context;
 use ExeQue\ZipStream\Events\EventQueue;
 use ExeQue\ZipStream\Events\SavedToDisk;
 use ExeQue\ZipStream\Events\SavedToFilesystem;
@@ -24,6 +24,7 @@ use ExeQue\ZipStream\Events\StreamedResponse;
 use ExeQue\ZipStream\Events\StreamingResponse;
 use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use ExeQue\ZipStream\Options\ProgressInterval;
+use Fiber;
 use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Stream;
@@ -56,6 +57,13 @@ class Builder implements Responsable, HasZipOptions
     private Pending $pending;
 
     private bool $withContentLength = false;
+
+    private bool $withKnownSize = false;
+
+    /** Memoised: working the size out walks every entry, and both the header and progress want it. */
+    private ?int $knownSize = null;
+
+    private bool $knownSizeResolved = false;
 
     private ProgressInterval $progressEvery;
 
@@ -125,6 +133,23 @@ class Builder implements Responsable, HasZipOptions
     }
 
     /**
+     * Attach whatever the application needs on every event about this archive.
+     *
+     * Merged into Context::$data. For something belonging to a single entry, use context() on the
+     * entry instead - it comes back on the events about that entry.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    public function withContext(array $context): static
+    {
+        $state = $this->events->state();
+
+        $state->data = [...$state->data, ...$context];
+
+        return $this;
+    }
+
+    /**
      * Stop the archive after the entry being streamed right now.
      *
      * Meant to be called from an event handler: remaining entries are skipped, ProcessAborted fires and
@@ -147,6 +172,20 @@ class Builder implements Responsable, HasZipOptions
     public function withContentLength(bool $enabled = true): static
     {
         $this->withContentLength = $enabled;
+
+        return $this->withKnownSize($enabled);
+    }
+
+    /**
+     * Work out the archive size before writing it, so progress knows what it is working towards.
+     *
+     * Lands on Context::$bytes->total, which is null without it. The size can only be known when every
+     * entry is stored with a known exactSize; it stays null otherwise. Costs one pass over the entries
+     * and no I/O.
+     */
+    public function withKnownSize(bool $enabled = true): static
+    {
+        $this->withKnownSize = $enabled;
 
         return $this;
     }
@@ -208,16 +247,19 @@ class Builder implements Responsable, HasZipOptions
 
     public function saveToLocal(string $path): ?int
     {
-
         $directory = dirname($path);
 
         // makeDirectory() warns about a directory that is already there, which a strict error handler turns into an error.
         is_dir($directory) || Filesystem::makeDirectory($directory, 0755, true, true);
 
+        $this->resolveKnownSize();
+
         $this->events->dispatch(SavingToFilesystem::class, $path);
 
-        $existed = is_file($path);
-        $stream = new Stream(fopen($path, 'w+b'));
+        // Built beside the target and moved into place, so a failure leaves whatever was there
+        // untouched rather than truncated. rename() is atomic within a filesystem.
+        $temporary = $path . '.' . bin2hex(random_bytes(4)) . '.part';
+        $stream = new Stream(fopen($temporary, 'w+b'));
         $failed = true;
 
         try {
@@ -232,12 +274,12 @@ class Builder implements Responsable, HasZipOptions
         } finally {
             $stream->close();
 
-            // Only what this call created: half an archive is worse than no archive, but a file
-            // that was already there is not ours to remove.
-            if ($failed && !$existed) {
-                unlink($path);
+            if ($failed) {
+                unlink($temporary);
             }
         }
+
+        rename($temporary, $path);
 
         $this->events->dispatch(SavedToFilesystem::class, $path, $size);
 
@@ -361,6 +403,8 @@ class Builder implements Responsable, HasZipOptions
      */
     private function lazyArchive(?int &$size = null, ?Throwable &$failure = null): PumpStream
     {
+        $this->resolveKnownSize();
+
         $fiber = new Fiber(function () use (&$size) {
             // Every slot a decorator might proxy has to be here: FnStream::decorate() fills the ones
             // it isn't given with a callable into this stream, and a missing slot throws when called -
@@ -489,16 +533,16 @@ class Builder implements Responsable, HasZipOptions
             return $stream;
         }
 
-        $total = 0;
+        $state = $this->events->state();
         $pending = 0;
         $reportedAt = microtime(true);
 
-        $report = function () use (&$total, &$pending, &$reportedAt): void {
+        $report = function () use (&$pending, &$reportedAt): void {
             if ($pending === 0) {
                 return;
             }
 
-            $this->events->dispatch(StreamedBytes::class, $pending, $total);
+            $this->events->dispatch(StreamedBytes::class, $pending);
 
             $pending = 0;
             $reportedAt = microtime(true);
@@ -508,9 +552,9 @@ class Builder implements Responsable, HasZipOptions
         $this->flushProgress = $report;
 
         return FnStream::decorate($stream, [
-            'write' => function (string $data) use ($stream, &$total, &$pending, &$reportedAt, $report): int {
+            'write' => function (string $data) use ($stream, $state, &$pending, &$reportedAt, $report): int {
                 $written = $stream->write($data);
-                $total += $written;
+                $state->bytesDone += $written;
                 $pending += $written;
 
                 $due = $this->progressEvery->isTimeBased()
@@ -529,6 +573,20 @@ class Builder implements Responsable, HasZipOptions
     /**
      * Close the archive and report whatever progress the last write left over.
      */
+    /**
+     * Give progress its target, where one can be had.
+     */
+    private function resolveKnownSize(): void
+    {
+        if (!$this->knownSizeResolved) {
+            $this->knownSize = $this->withKnownSize ? $this->calculateSize() : null;
+            $this->knownSizeResolved = true;
+        }
+
+        $this->events->state()->bytesTotal = $this->knownSize;
+        $this->events->state()->bytesDone = 0;
+    }
+
     private function finishArchive(ZipStream $zipStream): ?int
     {
         $size = $zipStream->finish();
@@ -553,12 +611,14 @@ class Builder implements Responsable, HasZipOptions
             ),
         ];
 
-        if ($this->withContentLength && ($size = $this->calculateSize()) !== null) {
+        if ($this->withContentLength && ($size = $this->resolvedSize()) !== null) {
             $headers['Content-Length'] = $size;
         }
 
         return new SymfonyStreamedResponse(
             function () {
+                $this->resolveKnownSize();
+
                 $this->events->dispatch(StreamingResponse::class);
 
                 $stream = $this->prepareZipStream();
@@ -572,6 +632,16 @@ class Builder implements Responsable, HasZipOptions
             200,
             $headers,
         );
+    }
+
+    private function resolvedSize(): ?int
+    {
+        if (!$this->knownSizeResolved) {
+            $this->knownSize = $this->calculateSize();
+            $this->knownSizeResolved = true;
+        }
+
+        return $this->knownSize;
     }
 
     /**

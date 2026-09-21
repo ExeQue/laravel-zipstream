@@ -5,7 +5,9 @@ declare(strict_types=1);
 use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\StreamedToZip;
+use ExeQue\ZipStream\Events\Data\Context;
 use ExeQue\ZipStream\Events\ProcessFinished;
 use ExeQue\ZipStream\Events\ProcessStarted;
 use ExeQue\ZipStream\Events\SavedToDisk;
@@ -73,7 +75,7 @@ describe('Event chains', function () use ($entryChain) {
             });
     });
 
-    it('shares one id across every event of an archive', function () {
+    it('hands every event of an archive the same id, in its own snapshot', function () {
         $pending = new Pending();
         $pending->add(Raw::make('file.txt', 'content'));
 
@@ -84,10 +86,80 @@ describe('Event chains', function () use ($entryChain) {
 
         $pending->process($stream, $spy);
 
-        $ids = array_map(fn (Event $event) => $event->id, $spy->events());
+        $contexts = array_map(fn (Event $event) => $event->context, $spy->events());
+        $ids = array_map(fn (Context $context) => $context->id, $contexts);
 
         expect(array_unique($ids))->toHaveCount(1)
-            ->and($ids[0])->toBe($spy->id());
+            ->and($ids[0])->toBe($spy->context()->id)
+            // Each event holds its own frozen copy, so a handler can keep it.
+            ->and($contexts[0])->not->toBe($contexts[1]);
+    });
+
+    it('freezes the context it hands out', function () {
+        $pending = new Pending();
+        $pending->add(Raw::make('file.txt', 'content'));
+
+        $spy = new EventQueueSpy();
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once();
+
+        $pending->process($stream, $spy);
+
+        $context = $spy->events()[0]->context;
+
+        expect(fn () => $context->entry = null)->toThrow(Error::class)
+            ->and(fn () => $context->entries->done = 99)->toThrow(Error::class);
+    });
+
+    it('reports the entry being streamed and how far along the archive is', function () {
+        $pending = new Pending();
+        $pending->add(Directory::make('dir1'));
+        $pending->add($file = Raw::make('file.txt', 'content'));
+
+        $spy = new EventQueueSpy();
+        $seen = [];
+
+        $spy->add(function (StreamedToZip $event) use (&$seen) {
+            $seen[] = [
+                $event->context->entry?->destination(),
+                $event->context->entries->done,
+                $event->context->entries->total,
+            ];
+        });
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addDirectory')->once();
+        $stream->shouldReceive('addFileFromCallback')->once();
+
+        $pending->process($stream, $spy);
+
+        expect($seen)->toBe([
+            ['dir1', 1, 2],
+            ['file.txt', 2, 2],
+        ]);
+
+        // Nothing is being written once the archive is done.
+        expect($spy->context()->entry)->toBeNull();
+    });
+
+    it('carries the context set on an entry', function () {
+        $pending = new Pending();
+        $pending->add(Raw::make('file.txt', 'content')->context(['media' => 42]));
+
+        $spy = new EventQueueSpy();
+        $seen = null;
+
+        $spy->add(function (StreamedFile $event) use (&$seen) {
+            $seen = $event->context->entryData();
+        });
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once();
+
+        $pending->process($stream, $spy);
+
+        expect($seen)->toBe(['media' => 42]);
     });
 
     it('wraps the entry chain in the filesystem events', function () use ($entryChain) {

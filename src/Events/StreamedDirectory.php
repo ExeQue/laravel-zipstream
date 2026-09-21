@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ExeQue\ZipStream\Events;
 
 use ExeQue\ZipStream\Content\Directory;
+use ExeQue\ZipStream\Events\Contracts\StreamedToZip;
+use ExeQue\ZipStream\Events\Data\Context;
 use ExeQue\ZipStream\Options\FileOptions;
 
 /**
@@ -13,7 +15,7 @@ use ExeQue\ZipStream\Options\FileOptions;
 final readonly class StreamedDirectory implements StreamedToZip
 {
     public function __construct(
-        public string $id,
+        public Context $context,
         public Directory $directory,
         public FileOptions $options,
     ) {

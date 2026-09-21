@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace ExeQue\ZipStream\Events;
+namespace ExeQue\ZipStream\Events\Contracts;
+
+use ExeQue\ZipStream\Events\Data\Progress;
 
 /**
  * Progress while the archive is written.

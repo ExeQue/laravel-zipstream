@@ -97,18 +97,24 @@ class Pending
 
         $entries = collect($this->entries);
 
+        $state = $events->state();
+        $state->entriesTotal = $entries->count();
+        $state->entriesDone = 0;
+        $state->entry = null;
+
         $events->dispatch(ProcessStarted::class);
 
         $directories = $entries->filter(fn ($entry) => $entry instanceof Directory);
         $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
 
-        $directories->each(function (Directory $directory) use ($stream, $events) {
+        $directories->each(function (Directory $directory) use ($stream, $events, $state) {
             if ($this->aborted()) {
                 $events->dispatch(ProcessAborted::class);
 
                 return false;
             }
 
+            $state->entry = $directory;
             $options = $directory->getFileOptions();
 
             $events->dispatch(StreamingDirectory::class, $directory, $options);
@@ -125,16 +131,21 @@ class Pending
                 return null;
             }
 
+            $state->entriesDone++;
+
             $events->dispatch(StreamedDirectory::class, $directory, $options);
+
+            $state->entry = null;
         });
 
-        $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions) {
+        $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions, $state) {
             if ($this->aborted()) {
                 $events->dispatch(ProcessAborted::class);
 
                 return false;
             }
 
+            $state->entry = $file;
             $opened = null;
 
             try {
@@ -164,8 +175,13 @@ class Pending
                     return null;
                 }
 
+                $state->entriesDone++;
+
                 $events->dispatch(StreamedFile::class, $file, $options);
             } finally {
+                // Between entries nothing is being written, and the archive is closed with none open.
+                $state->entry = null;
+
                 if (!$file instanceof RetainsStream) {
                     $this->closeStream($opened);
                 }

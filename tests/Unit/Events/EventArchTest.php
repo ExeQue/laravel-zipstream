@@ -3,14 +3,16 @@
 declare(strict_types=1);
 
 use ExeQue\ZipStream\Content\Directory;
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
+use ExeQue\ZipStream\Events\Contracts\ProgressEvent;
+use ExeQue\ZipStream\Events\Contracts\StreamedToZip;
+use ExeQue\ZipStream\Events\Contracts\StreamingToZip;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\LifecycleEvent;
 use ExeQue\ZipStream\Events\ProcessAborted;
 use ExeQue\ZipStream\Events\ProcessError;
 use ExeQue\ZipStream\Events\ProcessFinished;
 use ExeQue\ZipStream\Events\ProcessStarted;
-use ExeQue\ZipStream\Events\ProgressEvent;
 use ExeQue\ZipStream\Events\SavedToDisk;
 use ExeQue\ZipStream\Events\SavedToFilesystem;
 use ExeQue\ZipStream\Events\SavingToDisk;
@@ -19,11 +21,9 @@ use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamedDirectory;
 use ExeQue\ZipStream\Events\StreamedFile;
 use ExeQue\ZipStream\Events\StreamedResponse;
-use ExeQue\ZipStream\Events\StreamedToZip;
 use ExeQue\ZipStream\Events\StreamingDirectory;
 use ExeQue\ZipStream\Events\StreamingFile;
 use ExeQue\ZipStream\Events\StreamingResponse;
-use ExeQue\ZipStream\Events\StreamingToZip;
 use ExeQue\ZipStream\Options\FileOptions;
 
 /**
@@ -134,18 +134,18 @@ describe('event types', function () {
         $events->dispatch($event, ...$arguments);
 
         expect($received)->toBeInstanceOf($event)
-            ->and($received->id)->toBe($events->id());
+            ->and($received->context->id)->toBe($events->context()->id);
 
         foreach (array_slice((new ReflectionClass($event))->getConstructor()->getParameters(), 1) as $index => $parameter) {
             expect($received->{$parameter->getName()})->toBe($arguments[$index]);
         }
     })->with(fn () => eventClasses());
 
-    it('is a final readonly class taking the archive id first', function (string $event) {
+    it('is a final readonly class taking the context first', function (string $event) {
         $reflection = new ReflectionClass($event);
 
         expect($reflection->isFinal())->toBeTrue()
             ->and($reflection->isReadOnly())->toBeTrue()
-            ->and($reflection->getConstructor()->getParameters()[0]->getName())->toBe('id');
+            ->and($reflection->getConstructor()->getParameters()[0]->getName())->toBe('context');
     })->with(fn () => eventClasses());
 });

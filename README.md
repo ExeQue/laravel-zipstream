@@ -332,11 +332,11 @@ keep in sync: the type is the registration.
 ```php
 use ExeQue\ZipStream\Events\ProcessStarted;
 use ExeQue\ZipStream\Events\StreamedFile;
-use ExeQue\ZipStream\Events\StreamingToZip;
+use ExeQue\ZipStream\Events\Contracts\StreamingToZip;
 use ExeQue\ZipStream\Facades\Zip;
 
 Zip::as('archive.zip')
-    ->on(fn (ProcessStarted $event) => Log::info("Zip {$event->id} started"))
+    ->on(fn (ProcessStarted $event) => Log::info("Zip {$event->context->id} started"))
     ->on(fn (StreamedFile $event) => Log::info("Added {$event->file->destination()}"))
     ->on(fn (StreamingToZip $event) => $this->touch())          // files and directories
     ->fromDisk('public', 'images/photo1.jpg')
@@ -349,12 +349,54 @@ A union listens for several at once:
 ->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$event->path}"))
 ```
 
-Every event carries `$id`, the same value for every event of one archive. The rest of its properties are named
-after what they are, so there is no argument order to remember.
+Every event carries a `$context` describing the archive it belongs to. The rest of its properties are named after
+what they are, so there is no argument order to remember.
+
+### Context
+
+```php
+$zip->on(function (StreamedBytes $event) {
+    $context = $event->context;
+
+    Cache::put("zip:{$context->id}", [
+        'file'    => $context->entry?->destination(),
+        'files'   => "{$context->entries->done}/{$context->entries->total}",
+        'bytes'   => $context->bytes->done,
+        'percent' => $context->entries->percentage(),
+    ]);
+});
+```
+
+| Property | |
+|---|---|
+| `id` | The same value for every event of one archive |
+| `entry` | What is being streamed right now, or `null` between entries and while the archive is closed |
+| `entries` | An `Entries`: `done`, `total`, `percentage()`, `isComplete()`. The total is counted before the first byte |
+| `bytes` | A `Bytes`: the same, except `total` is null and `percentage()` with it unless the size is known |
+| `data` | Whatever was handed to `withContext()` |
+| `entryData()` | The context set on the current entry, as an array |
+
+Each event gets its own frozen snapshot, so a handler can hold on to it, and nothing a handler does reaches
+back into the archive. `withKnownSize()` is what gives `bytes->total` a value; without it the byte percentage
+is null, while the entry percentage always has one.
+
+**Per-entry context** saves an archive built from database rows from keeping its own map back from destination
+to record:
+
+```php
+$zip->fromDisk('s3', $media->path, $media->name, fn (DiskFile $file) => $file->context(['media' => $media->id]));
+
+$zip->on(fn (ProcessError $event) => Log::error('Entry failed', $event->context->entryData()));
+```
+
+`withContext()` does the same for the archive as a whole, and lands in `$context->data`.
 
 ### What listens for what
 
 The interfaces are the groups. Listening for one means listening for every event that implements it.
+
+Everything below lives in `ExeQue\ZipStream\Events`: the events themselves at its root, the interfaces under
+`Events\Contracts`, and `Context`, `Entries` and `Bytes` under `Events\Data`.
 
 | Interface | Covers |
 |---|---|
@@ -374,7 +416,7 @@ The interfaces are the groups. Listening for one means listening for every event
 | `StreamedFile` | `file`, `options` | After a file entry |
 | `StreamingDirectory` | `directory`, `options` | Before a directory entry |
 | `StreamedDirectory` | `directory`, `options` | After a directory entry |
-| `StreamedBytes` | `written`, `total` | Every write of archive bytes |
+| `StreamedBytes` | `written`, `total` | As archive bytes are written, throttled |
 | `SavingToDisk` | `disk`, `path` | Before `saveToDisk()` writes |
 | `SavedToDisk` | `disk`, `path`, `size` | After `saveToDisk()` |
 | `SavingToFilesystem` | `path` | Before `saveToLocal()` writes |
@@ -395,7 +437,12 @@ or disk.
 ```php
 Zip::store()
     ->on(function (StreamedBytes $event) {
-        Cache::put("zip:{$event->id}", $event->total);
+        // The package throttles this one, so a display can be driven straight off it.
+        Cache::put("zip:{$event->context->id}", [
+            'files' => "{$event->context->entriesDone}/{$event->context->entriesTotal}",
+            'file'  => $event->context->entry?->destination(),
+            'bytes' => $event->total,
+        ]);
     })
     ->fromDisk('s3', 'huge.mp4')
     ->saveToDisk('s3', 'archives/huge.zip');
@@ -405,8 +452,11 @@ It counts the archive's own output, not the bytes read from the sources, so a si
 progress while it is being streamed. The first bytes are written before the first entry is finished, so a
 counter driven by `StreamedFile` alongside it starts at zero rather than one.
 
-`written` is the bytes since the previous event, `total` the archive so far. By default an event is dispatched
-at most once per second, because PHP writes in 8 KB chunks and few progress bars want 128 updates per megabyte.
+`written` is the bytes since the previous report - not the size of one write, since reports are throttled -
+and `total` is the archive so far. By default an event is dispatched at most once per second, because PHP writes
+in 8 KB chunks and few progress bars want 128 updates per megabyte. The context carries the entry counts and the
+entry being written, so one handler covers files and bytes both; the flush at the end makes sure the last report
+lands.
 
 #### Throttling
 

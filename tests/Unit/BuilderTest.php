@@ -10,13 +10,13 @@ use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
 use ExeQue\ZipStream\Content\LocalFile;
 use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Events\Event;
-use ExeQue\ZipStream\Exceptions\FileUnavailableException;
-use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
-use ExeQue\ZipStream\Events\LifecycleEvent;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
 use ExeQue\ZipStream\Events\ProcessAborted;
 use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -327,7 +327,7 @@ describe(Builder::class, function () {
 
         $this->builder
             ->on(function (StreamedBytes $event) use (&$chunks) {
-                $chunks[] = [$event->written, $event->total];
+                $chunks[] = [$event->written, $event->context->bytes->done];
             })
             ->fromLocal(__FILE__, 'builder.php');
 
@@ -359,7 +359,7 @@ describe(Builder::class, function () {
         // Four full chunks, plus whatever the central directory adds on the end.
         expect($events)->toHaveCount(5)
             ->and(array_sum($written))->toBe($size)
-            ->and(end($events)->total)->toBe($size)
+            ->and(end($events)->context->bytes->done)->toBe($size)
             // Every event but the last carries at least the threshold.
             ->and(array_slice($written, 0, -1))->each->toBeGreaterThanOrEqual(1024 * 1024);
     });
@@ -397,7 +397,7 @@ describe(Builder::class, function () {
         $size = $this->builder->saveToLocal($this->createTestFile());
 
         expect($last)->not->toBeNull()
-            ->and($last->total)->toBe($size);
+            ->and($last->context->bytes->done)->toBe($size);
     });
 
     it('reports progress no more often than the interval', function () {
@@ -431,6 +431,27 @@ describe(Builder::class, function () {
             ->and($interval->seconds)->toBe(1.0);
     });
 
+    it('names the entry being written on the progress event', function () {
+        $seen = [];
+
+        $this->builder
+            ->progressEveryBytes(0)
+            ->on(function (StreamedBytes $event) use (&$seen) {
+                $seen[] = [$event->context->entry?->destination(), $event->context->entryData()];
+            })
+            ->fromRaw('first.txt', 'content')
+            ->add(Raw::make('second.txt', 'more content')->context(['media' => 7]));
+
+        $this->builder->saveToLocal($this->createTestFile());
+
+        $entries = array_column($seen, 0);
+
+        expect($entries)->toContain('first.txt', 'second.txt')
+            // The central directory is written with no entry open.
+            ->and(end($entries))->toBeNull()
+            ->and(array_column($seen, 1))->toContain(['media' => 7]);
+    });
+
     it('reports archive bytes on every output path', function (string $path) {
         $total = 0;
 
@@ -442,7 +463,7 @@ describe(Builder::class, function () {
 
         $this->builder
             ->on(function (StreamedBytes $event) use (&$total) {
-                $total = $event->total;
+                $total = $event->context->bytes->done;
             })
             ->fromRaw('test.txt', 'content');
 
@@ -545,7 +566,7 @@ describe(Builder::class, function () {
             ->and(file_exists($path))->toBeFalse();
     });
 
-    it('keeps a local file that was already there when building fails', function () {
+    it('leaves a local file that was already there intact when building fails', function () {
         $path = $this->createTestFile();
         file_put_contents($path, 'previous archive');
 
@@ -555,8 +576,9 @@ describe(Builder::class, function () {
 
         expect(fn () => $this->builder->saveToLocal($path))->toThrow(FileUnavailableException::class);
 
-        // Overwritten in place - but not deleted, since this call did not create it.
-        expect(file_exists($path))->toBeTrue();
+        // The archive is built beside the target, so the previous one is neither truncated nor removed.
+        expect(file_get_contents($path))->toBe('previous archive')
+            ->and(glob(dirname($path) . '/*.part'))->toBeEmpty();
     });
 
     it('builds a full archive again after an abort', function () {

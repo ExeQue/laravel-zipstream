@@ -3,14 +3,14 @@
 declare(strict_types=1);
 
 use ExeQue\ZipStream\Contracts\StreamableToZip;
-use ExeQue\ZipStream\Events\Event;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
+use ExeQue\ZipStream\Events\Contracts\StreamedToZip;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\LifecycleEvent;
 use ExeQue\ZipStream\Events\ProcessError;
 use ExeQue\ZipStream\Events\ProcessStarted;
 use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamedFile;
-use ExeQue\ZipStream\Events\StreamedToZip;
 use ExeQue\ZipStream\Exceptions\InvalidEventHandlerException;
 use ExeQue\ZipStream\Options\FileOptions;
 

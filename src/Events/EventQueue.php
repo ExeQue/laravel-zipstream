@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace ExeQue\ZipStream\Events;
 
 use Closure;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Data\Context;
+use ExeQue\ZipStream\Events\Internal\ArchiveState;
 use ExeQue\ZipStream\Exceptions\InvalidEventHandlerException;
 use ReflectionFunction;
 use ReflectionNamedType;
@@ -15,19 +18,29 @@ class EventQueue
     /** @var array<int, array{types: string[], handler: callable}> */
     private array $handlers = [];
 
-    private string $id;
+    private ArchiveState $state;
 
     public function __construct()
     {
-        $this->id = uniqid('zip-', true);
+        $this->state = new ArchiveState(uniqid('zip-', true));
     }
 
     /**
-     * The id shared by every event of this archive.
+     * The archive as it stands, written to by the builder. Events are handed a frozen copy of it.
+     *
+     * @internal
      */
-    public function id(): string
+    public function state(): ArchiveState
     {
-        return $this->id;
+        return $this->state;
+    }
+
+    /**
+     * The context as it stands right now, as handlers would see it.
+     */
+    public function context(): Context
+    {
+        return $this->state->snapshot();
     }
 
     /**
@@ -69,7 +82,7 @@ class EventQueue
             return;
         }
 
-        $dispatched = new $event($this->id, ...$args);
+        $dispatched = new $event($this->state->snapshot(), ...$args);
 
         foreach ($handlers as $handler) {
             $handler($dispatched);

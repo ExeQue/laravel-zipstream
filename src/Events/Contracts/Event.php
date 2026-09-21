@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace ExeQue\ZipStream\Events;
+namespace ExeQue\ZipStream\Events\Contracts;
+
+use ExeQue\ZipStream\Events\Data\Context;
 
 /**
  * Anything the builder reports while it works.
@@ -12,5 +14,5 @@ namespace ExeQue\ZipStream\Events;
  */
 interface Event
 {
-    public string $id { get; }
+    public Context $context { get; }
 }
