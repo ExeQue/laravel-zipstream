@@ -2,6 +2,16 @@
 
 # Output Options
 
+<!-- toc -->
+
+- [Naming the Archive](#naming-the-archive)
+- [Stream to Browser (Response)](#stream-to-browser-response)
+- [Save to Local Path](#save-to-local-path)
+- [Save to Laravel Disk](#save-to-laravel-disk)
+- [Get as String or Stream](#get-as-string-or-stream)
+
+<!-- /toc -->
+
 ## Naming the Archive
 
 ```php

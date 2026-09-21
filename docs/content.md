@@ -2,6 +2,20 @@
 
 # Adding Content
 
+<!-- toc -->
+
+- [From Laravel Disks](#from-laravel-disks)
+- [From a Whole Prefix or Directory](#from-a-whole-prefix-or-directory)
+- [From Local Path](#from-local-path)
+- [From Raw Content](#from-raw-content)
+- [From Custom Classes (Contracts)](#from-custom-classes-contracts)
+- [Recognising an Entry Again](#recognising-an-entry-again)
+- [Empty Directories](#empty-directories)
+- [Skipping Verification](#skipping-verification)
+- [Entry Sizes](#entry-sizes)
+
+<!-- /toc -->
+
 ## From Laravel Disks
 Add files stored on any of your configured Laravel filesystems.
 

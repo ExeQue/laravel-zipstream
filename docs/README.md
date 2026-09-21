@@ -5,7 +5,7 @@
 - [Adding content](content.md) - Disks, local paths, whole directories, raw content, your own models, per-entry options and stream ownership
 - [Output](output.md) - Response, local path, disk, string or stream - and what a failed write leaves behind
 - [Events](events.md) - Context, progress, error handling and stopping an archive early
-- [Configuration](configuration.md) - Config file, fluent defaults and macros
+- [Configuration](configuration.md) - Config file, fluent defaults, translations and macros
 - [Testing](testing.md) - `Zip::fake()` and asserting what an archive contained
 
 Also in this repository:

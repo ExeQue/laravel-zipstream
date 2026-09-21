@@ -2,6 +2,17 @@
 
 # Events
 
+<!-- toc -->
+
+- [Context](#context)
+  - [Entries and Bytes](#entries-and-bytes)
+- [What listens for what](#what-listens-for-what)
+- [Progress](#progress)
+- [Stopping Early](#stopping-early)
+- [Handling Errors](#handling-errors)
+
+<!-- /toc -->
+
 A handler declares what it listens for with its first parameter. There is no event name to pass and nothing to
 keep in sync: the type is the registration.
 

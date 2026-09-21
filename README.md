@@ -39,7 +39,7 @@ The full documentation is in [docs/](docs/README.md).
 - [Adding content](docs/content.md) - Disks, local paths, whole directories, raw content, your own models, and per-entry options
 - [Output](docs/output.md) - Response, local path, disk, string or stream - and what happens when one fails
 - [Events](docs/events.md) - Progress, context, error handling and stopping an archive early
-- [Configuration](docs/configuration.md) - Config file, fluent defaults and macros
+- [Configuration](docs/configuration.md) - Config file, fluent defaults, translations and macros
 - [Testing](docs/testing.md) - `Zip::fake()` and asserting what an archive contained
 - [Upgrade guide](UPGRADE.md) - Moving between major versions
 

@@ -2,6 +2,15 @@
 
 # Configuration
 
+<!-- toc -->
+
+- [The config file](#the-config-file)
+- [Translations](#translations)
+- [Fluent Configuration](#fluent-configuration)
+- [Extending the Builder (Macros)](#extending-the-builder-macros)
+
+<!-- /toc -->
+
 ## The config file
 Publish it to set application-wide defaults:
 
