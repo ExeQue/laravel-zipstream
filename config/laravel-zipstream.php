@@ -79,4 +79,19 @@ return [
     |
     */
     'progress_every' => env('ZIPSTREAM_PROGRESS_EVERY'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Size Precision
+    |--------------------------------------------------------------------------
+    |
+    | How many decimals Bytes::toHuman() renders: 2 gives "5.00 KB of 64.00 MB",
+    | 0 gives "5 KB of 64 MB". Every method takes a precision of its own, which
+    | wins over this.
+    |
+    | Supported: 0 and up
+    | Default: 2
+    |
+    */
+    'size_precision' => 2,
 ];

@@ -33,3 +33,5 @@ Also in this repository:
 | `withoutVerification()` | [Adding content](content.md#skipping-verification) |
 | `context()` on an entry, `withContext()` | [Adding content](content.md#recognising-an-entry-again) |
 | `Zip::fake()` | [Testing](testing.md) |
+| `toHuman()`, `percentageToHuman()` and the rest | [Events](events.md#entries-and-bytes) |
+| Translations for those strings | [Configuration](configuration.md#translations) |

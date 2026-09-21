@@ -280,7 +280,10 @@ $zip->on(function (StreamedBytes $event) {
 | - | `$event->context->entry`, null between entries |
 
 `entries` is an `Entries` and `bytes` a `Bytes`, both with `done`, `total`, `percentage()` and
-`isComplete()`. An entry total is always known; a byte total is null unless asked for. The context
+`isComplete()`. An entry total is always known; a byte total is null unless asked for. Both render themselves:
+`toHuman()` gives "10 of 125 files" and "5.00 KB of 64.00 MB", `percentageToHuman()` gives "8%", and the
+sentences come from the package's translations - shipped for 30 European locales, publishable with the
+`laravel-zipstream-translations` tag. The context
 is a frozen snapshot taken when the event was dispatched, so a handler can keep it, and nothing a handler does
 reaches back into the archive.
 

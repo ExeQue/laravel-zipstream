@@ -45,10 +45,67 @@ $zip->on(function (StreamedBytes $event) {
 
 - `id` - The same value for every event of one archive
 - `entry` - What is being streamed right now, or `null` between entries and while the archive is closed
-- `entries` - An `Entries`: `done`, `total`, `percentage()`, `isComplete()`. The total is counted before the first byte
-- `bytes` - A `Bytes`: the same, except `total` is null and `percentage()` with it unless the size is known
+- `entries` - An `Entries`, counted before the first byte is written
+- `bytes` - A `Bytes`, whose total is only known when the size was worked out up front
 - `data` - Whatever was handed to `withContext()`
 - `entryData()` - The context set on the current entry, as an array
+
+### Entries and Bytes
+
+Both render themselves, so a status line needs no formatting of its own.
+
+`Entries` - how many entries are done. The total is counted up front, so nothing here is ever null:
+
+| | Returns | |
+|---|---|---|
+| `done` | `int` | Entries finished so far |
+| `total` | `int` | Entries in the archive |
+| `percentage()` | `float` | `8.0`. An archive with no entries is 100.0 |
+| `isComplete()` | `bool` | |
+| `toHuman()` | `string` | `"10 of 125 files"` |
+| `percentageToHuman(int $precision = 0)` | `string` | `"8%"`, `"8.0%"` with a precision |
+
+`Bytes` - how much of the archive has been written. The total is null unless [`withKnownSize()`](output.md) was
+used, and everything derived from it is null with it:
+
+| | Returns | |
+|---|---|---|
+| `done` | `int` | Bytes written so far |
+| `total` | `?int` | The archive size, or null |
+| `percentage()` | `?float` | `25.0`, or null |
+| `isComplete()` | `bool` | False while the total is unknown - an archive that might still grow is not finished |
+| `toHuman(?int $precision = null)` | `string` | `"5.00 KB of 64.00 MB"`, or `"5.00 KB"` without a total |
+| `doneToHuman(?int $precision = null)` | `string` | `"5.00 KB"` |
+| `totalToHuman(?int $precision = null)` | `?string` | `"64.00 MB"`, or null |
+| `percentageToHuman(int $precision = 0)` | `?string` | `"25%"`, or null |
+
+```php
+$context->entries->toHuman();              // "10 of 125 files"
+$context->entries->percentageToHuman();    // "8%"
+
+$context->bytes->toHuman();                // "5.00 KB of 64.00 MB"
+$context->bytes->toHuman(0);               // "5 KB of 64 MB"
+$context->bytes->doneToHuman();            // "5.00 KB"
+$context->bytes->percentageToHuman(1);     // "25.0%"
+```
+
+Bytes are reduced to the largest unit they fit in. The decimals default to the `size_precision` config value -
+two out of the box - and an argument wins over it.
+
+Without a total there is no sentence to build, so `toHuman()` is the size on its own, and it reads the same in
+every language.
+
+The sentences come from the package's own translations, shipped for 30 locales: `bg`, `ca`, `cs`, `da`, `de`,
+`el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `is`, `it`, `lt`, `lv`, `nb`, `nl`, `nn`, `pl`, `pt`, `pt_BR`,
+`ro`, `ru`, `sk`, `sl`, `sv`, `tr` and `uk`. Publish them to change the wording or add a language:
+
+```bash
+php artisan vendor:publish --tag="laravel-zipstream-translations"
+```
+
+That writes `lang/vendor/laravel-zipstream/{locale}/progress.php`. The numbers themselves are formatted by
+Laravel's `Number` helper, so a decimal comma is a matter of `Number::useLocale()` in the application rather than
+of these files.
 
 Each event gets its own frozen snapshot, so a handler can hold on to it, and nothing a handler does reaches
 back into the archive. `withKnownSize()` is what gives `bytes->total` a value; without it the byte percentage

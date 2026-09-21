@@ -2,11 +2,20 @@
 
 namespace Tests;
 
+use ExeQue\ZipStream\LaravelZipStreamServiceProvider;
 use Orchestra\Testbench\TestCase as BaseTestCase;
 
 abstract class TestCase extends BaseTestCase
 {
     private array $testFiles = [];
+
+    /**
+     * @return array<int, class-string>
+     */
+    protected function getPackageProviders($app): array
+    {
+        return [LaravelZipStreamServiceProvider::class];
+    }
 
     /**
      * @return false|string

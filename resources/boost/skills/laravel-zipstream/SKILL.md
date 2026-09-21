@@ -181,8 +181,8 @@ parameter throws `InvalidEventHandlerException` when registered.
 
 - `id` - The same value for every event of one archive
 - `entry` - What is being streamed right now, `null` between entries
-- `entries` - `Entries`: done, total, percentage(). The total is known before the first byte
-- `bytes` - `Bytes`: the same, but total and percentage are null unless withKnownSize() was used
+- `entries` - `Entries`: done, total, percentage(), toHuman() - "10 of 125 files". The total is known before the first byte
+- `bytes` - `Bytes`: the same, plus doneToHuman()/totalToHuman() - "5.00 KB of 64.00 MB". Total and percentage are null unless withKnownSize() was used. The sentences are translated, and shipped for 30 European locales
 - `data` - Whatever `withContext()` was given
 - `entryData()` - The context set on the current entry
 

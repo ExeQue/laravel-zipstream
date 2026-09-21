@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace ExeQue\ZipStream\Events\Data;
 
+use Illuminate\Support\Number;
+
 /**
  * How many entries of the archive are done, as it stood when the event was dispatched.
  *
@@ -32,5 +34,24 @@ final readonly class Entries
     public function isComplete(): bool
     {
         return $this->done >= $this->total;
+    }
+
+    /**
+     * How many of how many: "10 of 125 files".
+     */
+    public function toHuman(): string
+    {
+        return trans_choice('laravel-zipstream::progress.entries', $this->total, [
+            'done'  => Number::format($this->done),
+            'total' => Number::format($this->total),
+        ]);
+    }
+
+    /**
+     * "8%". Always a value, since the total is counted before the first byte.
+     */
+    public function percentageToHuman(int $precision = 0): string
+    {
+        return Number::percentage($this->percentage(), $precision);
     }
 }

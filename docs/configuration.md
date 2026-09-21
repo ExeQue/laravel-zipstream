@@ -17,6 +17,8 @@ publishing nothing at all, uses the default.
 - `enable_zero_header` (`ZIPSTREAM_ENABLE_ZERO_HEADER`) - true or false
 - `progress_every` (`ZIPSTREAM_PROGRESS_EVERY`) - how often a `StreamedBytes` event is dispatched. A number is
   bytes, a string is a duration. Default: `'PT1S'`
+- `size_precision` - decimals in `Bytes::toHuman()`. `2` gives `"5.00 KB of 64.00 MB"`, `0` gives
+  `"5 KB of 64 MB"`. Default: `2`. No env var: it is a rendering choice, not a deployment one
 
 ```php
 'progress_every' => 1048576,             // every 1 MB written
@@ -28,6 +30,19 @@ publishing nothing at all, uses the default.
 A number between 1 and 8191 throws `InvalidProgressIntervalException`: below PHP's 8 KB write size it reports on
 every write anyway, and it is a duration written as a number far more often than it is a real threshold. See
 [Progress](events.md#progress) for every accepted format and for setting it per archive.
+
+## Translations
+The strings `Entries::toHuman()` and `Bytes::toHuman()` render ship with the package, in 30 locales covering
+most of Europe: `bg`, `ca`, `cs`, `da`, `de`, `el`, `en`, `es`, `et`, `fi`, `fr`, `hr`, `hu`, `is`, `it`, `lt`,
+`lv`, `nb`, `nl`, `nn`, `pl`, `pt`, `pt_BR`, `ro`, `ru`, `sk`, `sl`, `sv`, `tr` and `uk`. Publish them to reword
+them or add a language:
+
+```bash
+php artisan vendor:publish --tag="laravel-zipstream-translations"
+```
+
+They land in `lang/vendor/laravel-zipstream/{locale}/progress.php`, and a locale you do not publish falls back to
+the one the package ships.
 
 ## Fluent Configuration
 Every default can be overridden per archive:
