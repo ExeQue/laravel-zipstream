@@ -403,8 +403,64 @@ Zip::store()
 
 It counts the archive's own output, not the bytes read from the sources, so a single huge entry still reports
 progress while it is being streamed. The first bytes are written before the first entry is finished, so a
-counter driven by `StreamedFile` alongside it starts at zero rather than one. Granularity is PHP's write size (8 KB), so throttle a handler that does real
-work - which is why `LifecycleEvent` leaves it out.
+counter driven by `StreamedFile` alongside it starts at zero rather than one.
+
+`written` is the bytes since the previous event, `total` the archive so far. By default an event is dispatched
+at most once per second, because PHP writes in 8 KB chunks and few progress bars want 128 updates per megabyte.
+
+#### Throttling
+
+Throttle by bytes or by time - the method name says which, so a bare number is never mistaken for seconds:
+
+```php
+Zip::progressEveryBytes(8 * 1024 * 1024)               // every 8 MB written
+Zip::progressEveryBytes(0)                             // every write, unthrottled
+Zip::progressEveryInterval('PT1S')                     // ISO 8601 duration
+Zip::progressEveryInterval('500 milliseconds')         // relative duration
+Zip::progressEveryInterval('250ms')                    // same, shorter
+Zip::progressEveryInterval(new DateInterval('PT1S'))   // or the object itself
+```
+
+An interval is the default: a byte threshold is a guess at throughput, where 1 MB is a couple of events per
+second on an upload and a thousand on a local disk. The last event always carries the finished size, whatever
+the throttle.
+
+Set the default for the application with `progress_every` in the config, or `ZIPSTREAM_PROGRESS_EVERY`. There
+the unit comes from the type - **a number is bytes, a string is a duration**:
+
+```php
+'progress_every' => 1048576,             // every 1 MB
+'progress_every' => 0,                   // every write
+'progress_every' => 'PT1S',              // at most once per second
+'progress_every' => '500 milliseconds',  // below a second
+'progress_every' => null,                // the default, PT1S
+```
+
+#### Every accepted format
+
+| Value | Read as | Example |
+|---|---|---|
+| `int` | Bytes | `progressEveryBytes(1048576)`, `'progress_every' => 1048576` |
+| `0` | Every write | `progressEveryBytes(0)`, `'progress_every' => 0` |
+| Numeric string | Bytes - this is what `ZIPSTREAM_PROGRESS_EVERY=1048576` gives | `'progress_every' => '1048576'` |
+| String starting with `P` | ISO 8601 duration | `'PT1S'`, `'PT2M30S'`, `'PT0S'` |
+| Any other string | Relative duration, via `DateInterval::createFromDateString()` | `'500 milliseconds'`, `'250ms'`, `'1 second'` |
+| `DateInterval` | The interval, including its `$f` microseconds | `new DateInterval('PT1S')` |
+| `null` (config only) | The default | `PT1S` |
+
+ISO 8601 has no fractional seconds, so `'PT0.5S'` is a parse error. Write sub-second throttles relatively
+(`'500 milliseconds'`) or set `$f` on a `DateInterval` yourself.
+
+These throw `InvalidProgressIntervalException`:
+
+| Value | Why |
+|---|---|
+| A number from 1 to 8191 | Reads as a byte count that reports on every write, and is almost always a duration someone wrote as a number - `'progress_every' => 1` meaning one second |
+| A negative number | Not a threshold |
+| A string that is neither an ISO 8601 nor a relative duration | `'every second'`, `'banana'` |
+
+This throttle is also why `LifecycleEvent` leaves the event out: a handler on the whole lifecycle should not have
+to know about it.
 
 ### Stopping Early
 

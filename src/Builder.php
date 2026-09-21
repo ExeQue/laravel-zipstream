@@ -3,6 +3,7 @@
 namespace ExeQue\ZipStream;
 
 use Closure;
+use DateInterval;
 use Fiber;
 use ExeQue\ZipStream\Concerns\InteractsWithZipOptions;
 use ExeQue\ZipStream\Content\Directory;
@@ -22,6 +23,7 @@ use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamedResponse;
 use ExeQue\ZipStream\Events\StreamingResponse;
 use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
+use ExeQue\ZipStream\Options\ProgressInterval;
 use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Stream;
@@ -55,6 +57,11 @@ class Builder implements Responsable, HasZipOptions
 
     private bool $withContentLength = false;
 
+    private ProgressInterval $progressEvery;
+
+    /** Flushes whatever progress the last write left unreported. Set per archive. */
+    private ?Closure $flushProgress = null;
+
     public function __construct(
         private Factory $filesystemManager,
         Repository $config,
@@ -62,8 +69,37 @@ class Builder implements Responsable, HasZipOptions
     ) {
         $this->pending = new Pending();
 
+        $this->progressEvery = ProgressInterval::fromConfig($config->get('laravel-zipstream.progress_every'));
+
         $this->prepareZipOptions($config);
         $this->as('archive');
+    }
+
+    /**
+     * Report progress once this many bytes have been written.
+     *
+     * StreamedBytes would otherwise fire at PHP's 8 KB write size. Pass 0 for every write. The final
+     * event always carries the finished size, whatever the threshold.
+     */
+    public function progressEveryBytes(int $bytes): static
+    {
+        $this->progressEvery = ProgressInterval::bytes($bytes);
+
+        return $this;
+    }
+
+    /**
+     * Report progress at most this often, whatever the throughput.
+     *
+     * Takes a DateInterval or an ISO 8601 duration such as "PT1S". Better than a byte threshold for a
+     * progress bar: a fixed number of bytes fires thousands of times a second on a local disk and twice
+     * a second on a slow upload.
+     */
+    public function progressEveryInterval(DateInterval|string $interval): static
+    {
+        $this->progressEvery = ProgressInterval::every($interval);
+
+        return $this;
     }
 
     public function as(string $filename): static
@@ -189,7 +225,7 @@ class Builder implements Responsable, HasZipOptions
 
             $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
-            $zipStream->finish();
+            $this->finishArchive($zipStream);
 
             $size = $stream->getSize();
             $failed = false;
@@ -346,7 +382,7 @@ class Builder implements Responsable, HasZipOptions
 
             $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
-            $size = $zipStream->finish();
+            $size = $this->finishArchive($zipStream);
         });
 
         return new PumpStream(function () use ($fiber, &$failure) {
@@ -447,22 +483,61 @@ class Builder implements Responsable, HasZipOptions
      */
     private function reportingProgress(StreamInterface $stream): StreamInterface
     {
+        $this->flushProgress = null;
+
         if (! $this->events->hasHandlerFor(StreamedBytes::class)) {
             return $stream;
         }
 
         $total = 0;
+        $pending = 0;
+        $reportedAt = microtime(true);
+
+        $report = function () use (&$total, &$pending, &$reportedAt): void {
+            if ($pending === 0) {
+                return;
+            }
+
+            $this->events->dispatch(StreamedBytes::class, $pending, $total);
+
+            $pending = 0;
+            $reportedAt = microtime(true);
+        };
+
+        // Without this the tail of the archive goes unreported and progress never reaches the size.
+        $this->flushProgress = $report;
 
         return FnStream::decorate($stream, [
-            'write' => function (string $data) use ($stream, &$total): int {
+            'write' => function (string $data) use ($stream, &$total, &$pending, &$reportedAt, $report): int {
                 $written = $stream->write($data);
                 $total += $written;
+                $pending += $written;
 
-                $this->events->dispatch(StreamedBytes::class, $written, $total);
+                $due = $this->progressEvery->isTimeBased()
+                    ? microtime(true) - $reportedAt >= $this->progressEvery->seconds
+                    : $pending >= $this->progressEvery->bytes;
+
+                if ($due) {
+                    $report();
+                }
 
                 return $written;
             },
         ]);
+    }
+
+    /**
+     * Close the archive and report whatever progress the last write left over.
+     */
+    private function finishArchive(ZipStream $zipStream): ?int
+    {
+        $size = $zipStream->finish();
+
+        if ($this->flushProgress !== null) {
+            ($this->flushProgress)();
+        }
+
+        return $size;
     }
 
     public function toResponse($request): SymfonyStreamedResponse
@@ -490,7 +565,7 @@ class Builder implements Responsable, HasZipOptions
 
                 $this->pending->process($stream, $this->events, $this->getZipOptions());
 
-                $stream->finish();
+                $this->finishArchive($stream);
 
                 $this->events->dispatch(StreamedResponse::class);
             },

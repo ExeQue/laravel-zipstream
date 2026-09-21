@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit;
 
+use DateInterval;
 use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
@@ -335,6 +336,99 @@ describe(Builder::class, function () {
         expect($chunks)->not->toBeEmpty()
             ->and(array_sum(array_column($chunks, 0)))->toBe($size)
             ->and(end($chunks)[1])->toBe($size);
+    });
+
+    it('collects bytes before reporting progress', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(4 * 1024 * 1024));
+
+        $events = [];
+
+        $this->builder
+            ->store()
+            ->progressEveryBytes(1024 * 1024)
+            ->on(function (StreamedBytes $event) use (&$events) {
+                $events[] = $event;
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        $written = array_map(fn (StreamedBytes $event) => $event->written, $events);
+
+        // Four full chunks, plus whatever the central directory adds on the end.
+        expect($events)->toHaveCount(5)
+            ->and(array_sum($written))->toBe($size)
+            ->and(end($events)->total)->toBe($size)
+            // Every event but the last carries at least the threshold.
+            ->and(array_slice($written, 0, -1))->each->toBeGreaterThanOrEqual(1024 * 1024);
+    });
+
+    it('reports every write when the threshold is zero', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        $calls = 0;
+
+        $this->builder
+            ->store()
+            ->progressEveryBytes(0)
+            ->on(function (StreamedBytes $event) use (&$calls) {
+                $calls++;
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        // PHP hands the stream 8 KB at a time.
+        expect($calls)->toBeGreaterThan($size / (16 * 1024));
+    });
+
+    it('reports the tail of the archive even below the threshold', function () {
+        $last = null;
+
+        $this->builder
+            ->progressEveryBytes(64 * 1024 * 1024)
+            ->on(function (StreamedBytes $event) use (&$last) {
+                $last = $event;
+            })
+            ->fromRaw('test.txt', 'content');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        expect($last)->not->toBeNull()
+            ->and($last->total)->toBe($size);
+    });
+
+    it('reports progress no more often than the interval', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(8 * 1024 * 1024));
+
+        $stamps = [];
+
+        $this->builder
+            ->store()
+            ->progressEveryInterval('PT1S')
+            ->on(function (StreamedBytes $event) use (&$stamps) {
+                $stamps[] = microtime(true);
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $this->builder->saveToLocal($this->createTestFile());
+
+        // 8 MB is written well inside a second, so only the flush at the end reports.
+        expect($stamps)->toHaveCount(1);
+    });
+
+    it('takes an interval as a DateInterval too', function () {
+        $this->builder
+            ->progressEveryInterval(new DateInterval('PT1S'))
+            ->fromRaw('test.txt', 'content');
+
+        $interval = Invader::make($this->builder)->progressEvery;
+
+        expect($interval->isTimeBased())->toBeTrue()
+            ->and($interval->seconds)->toBe(1.0);
     });
 
     it('reports archive bytes on every output path', function (string $path) {

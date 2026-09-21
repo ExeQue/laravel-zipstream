@@ -1,5 +1,9 @@
 # Upgrade Guide
 
+Each section below is headed `## Upgrading from <from> to <to>`. Apply every section between the version that is
+installed and the one being moved to, oldest first. The `laravel-zipstream-upgrade` Boost skill works through
+them in that order.
+
 ## Upgrading from 0.x to 1.0
 
 1.0 stops `saveToDisk()` and `output(true)` from buffering the whole archive. Both now build the archive while it
@@ -19,6 +23,20 @@ composer require exeque/laravel-zipstream:1.x-dev
 ```
 
 `saveToLocal()` and `toResponse()` are unchanged. They already wrote straight to their destination.
+
+### If you published the config file
+
+1.0 adds one key. A published `config/laravel-zipstream.php` is not updated by composer, so add it by hand -
+republishing with `--force` would throw away whatever you configured:
+
+```php
+// How often to dispatch a StreamedBytes event. A number is bytes, a string is an
+// ISO 8601 duration. Use 0 to report every write. Default: 'PT1S'.
+'progress_every' => env('ZIPSTREAM_PROGRESS_EVERY'),
+```
+
+Leaving it out is safe: the default applies when the key is missing. See
+[byte progress](#new-byte-progress) for what it controls.
 
 ---
 
@@ -231,8 +249,14 @@ header. `as()` now throws `InvalidFilenameException` for a name containing CR or
 
 ### New: byte progress
 
-`StreamedBytes` fires as the archive is written, on every destination, carrying the bytes just written and the
-running total. See the README for an example.
+`StreamedBytes` fires as the archive is written, on every destination, carrying the bytes since the previous
+event and the running total. See the README for an example.
+
+It is throttled: an event is dispatched at most once per second, and the last one always carries the finished
+size. Change it per archive with `progressEveryBytes()` or `progressEveryInterval()`, or for the application
+with `progress_every` in the config, where a number is bytes and a string is a duration - ISO 8601 (`'PT1S'`)
+or relative (`'500 milliseconds'`). `progressEveryBytes(0)` reports every write. The README lists every accepted
+format.
 
 It sits outside `LifecycleEvent`, because it fires at PHP's write size (8 KB). A handler on the whole lifecycle
 is therefore not flooded by it.

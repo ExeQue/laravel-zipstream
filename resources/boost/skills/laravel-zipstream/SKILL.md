@@ -204,8 +204,30 @@ All live in `ExeQue\ZipStream\Events`.
 | `StreamedResponse` | - | After the response streams |
 
 `StreamedBytes` counts the archive's own output on every destination, so a single huge entry still reports
-progress. It fires at PHP's 8 KB write size, which is why `LifecycleEvent` leaves it out - throttle a handler
-that does real work.
+progress. `written` is the bytes since the previous event, `total` the archive so far.
+
+It is throttled to at most one event per second, since PHP writes in 8 KB chunks. The last event always carries
+the finished size.
+
+```php
+Zip::progressEveryBytes(8 * 1024 * 1024)   // every 8 MB, 0 for every write
+Zip::progressEveryInterval('PT1S')         // at most once per second - better for a progress bar
+Zip::progressEveryInterval('250ms')        // ISO 8601 has no fractional seconds
+```
+
+The application default is `progress_every` in the config. The unit comes from the type:
+
+| Value | Read as |
+|---|---|
+| `int` | Bytes, `0` for every write |
+| Numeric string | Bytes - what an env var gives |
+| String starting with `P` | ISO 8601 duration: `'PT1S'` |
+| Any other string | Relative duration: `'500 milliseconds'`, `'250ms'` |
+| `DateInterval` | The interval, `$f` included |
+| `null` | The default, `PT1S` |
+
+`'PT0.5S'` is not valid ISO 8601 - write sub-second throttles relatively. A number between 1 and 8191 throws
+`InvalidProgressIntervalException`, since `1` reads as one byte when one second was meant.
 
 ## Errors and Stopping Early
 `ProcessError` covers the entry being streamed, not exceptions from your own handlers. Without a handler for it,
