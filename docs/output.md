@@ -2,16 +2,6 @@
 
 # Output Options
 
-<!-- toc -->
-
-- [Naming the Archive](#naming-the-archive)
-- [Stream to Browser (Response)](#stream-to-browser-response)
-- [Save to Local Path](#save-to-local-path)
-- [Save to Laravel Disk](#save-to-laravel-disk)
-- [Get as String or Stream](#get-as-string-or-stream)
-
-<!-- /toc -->
-
 ## Naming the Archive
 
 ```php
@@ -50,7 +40,7 @@ return Zip::as('download.zip')
 
 The size is computed by replaying the archive in `OperationMode::SIMULATE_STRICT`, which performs
 no I/O at all. It only succeeds when **every** entry uses `CompressionMethod::STORE` *and* has a
-known `exactSize` (see [Entry sizes](content.md#entry-sizes)). When it cannot be determined, the header is
+known `exactSize` (see [Entry sizes](entries.md#entry-sizes)). When it cannot be determined, the header is
 silently omitted and the response falls back to chunked.
 
 `withKnownSize()` runs the same simulation without sending a header. It is what fills in
@@ -59,10 +49,9 @@ by itself.
 
 #### Streaming from S3
 
-Laravel defaults S3 disks to `'stream_reads' => false`. Flysystem then omits `@http.stream`, and
-Guzzle buffers each whole object in memory before `readStream()` returns. Every entry becomes a
-long stall with zero bytes sent — which is exactly what trips `fastcgi_read_timeout` and kills
-large downloads mid-transfer. Enable real streaming on any S3 disk used with this package:
+Laravel defaults S3 disks to `'stream_reads' => false`, which makes every entry buffer in memory before it is
+read. Turn it on, and see [S3](drivers/s3.md) for the rest - part sizes, options and what a failed upload leaves
+behind.
 
 ```php
 // config/filesystems.php

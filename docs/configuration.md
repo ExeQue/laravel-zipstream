@@ -2,15 +2,6 @@
 
 # Configuration
 
-<!-- toc -->
-
-- [The config file](#the-config-file)
-- [Translations](#translations)
-- [Fluent Configuration](#fluent-configuration)
-- [Extending the Builder (Macros)](#extending-the-builder-macros)
-
-<!-- /toc -->
-
 ## The config file
 Publish it to set application-wide defaults:
 
@@ -38,7 +29,7 @@ publishing nothing at all, uses the default.
 
 A number between 1 and 8191 throws `InvalidProgressIntervalException`: below PHP's 8 KB write size it reports on
 every write anyway, and it is a duration written as a number far more often than it is a real threshold. See
-[Progress](events.md#progress) for every accepted format and for setting it per archive.
+[Progress](progress.md#progress) for every accepted format and for setting it per archive.
 
 ## Translations
 The strings `Entries::toHuman()` and `Bytes::toHuman()` render ship with the package, in 30 locales covering

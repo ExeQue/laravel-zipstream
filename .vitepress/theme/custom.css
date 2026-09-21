@@ -1,0 +1,23 @@
+/*
+ * The accent follows the package's own artwork rather than VitePress' default indigo.
+ * Light mode stays dark enough to read as body-adjacent text; dark mode stays light
+ * enough against the near-black background.
+ */
+:root {
+    --vp-c-brand-1: #c1342a;
+    --vp-c-brand-2: #d8412f;
+    --vp-c-brand-3: #e8503c;
+    --vp-c-brand-soft: rgba(216, 65, 47, 0.14);
+
+    --vp-button-brand-border: transparent;
+    --vp-button-brand-bg: var(--vp-c-brand-2);
+    --vp-button-brand-hover-bg: var(--vp-c-brand-1);
+    --vp-button-brand-active-bg: var(--vp-c-brand-1);
+}
+
+.dark {
+    --vp-c-brand-1: #ff7a6b;
+    --vp-c-brand-2: #f4543f;
+    --vp-c-brand-3: #d8412f;
+    --vp-c-brand-soft: rgba(244, 84, 63, 0.16);
+}

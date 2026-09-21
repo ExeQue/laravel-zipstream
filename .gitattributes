@@ -12,3 +12,8 @@
 /testbench.yaml         export-ignore
 /img                    export-ignore
 /testbench.yaml         export-ignore
+/.vitepress          export-ignore
+/package.json        export-ignore
+/package-lock.json   export-ignore
+/docs                export-ignore
+/contributing        export-ignore

@@ -1,26 +1,5 @@
 # Upgrade Guide
 
-<!-- toc -->
-
-- [Upgrading from 0.x to 1.0](#upgrading-from-0x-to-10)
-  - [If you published the config file](#if-you-published-the-config-file)
-  - [`output()` is now `toString()` and `toStream()`](#output-is-now-tostring-and-tostream)
-  - [A failed `saveToDisk()` cleans up after itself](#a-failed-savetodisk-cleans-up-after-itself)
-  - [`ProcessError` no longer catches exceptions from your event handlers](#processerror-no-longer-catches-exceptions-from-your-event-handlers)
-  - [Events are objects, and a handler declares what it listens for](#events-are-objects-and-a-handler-declares-what-it-listens-for)
-  - [Context on every event, and `StreamedBytes` without its total](#context-on-every-event-and-streamedbytes-without-its-total)
-  - [The `Events` namespace has subfolders](#the-events-namespace-has-subfolders)
-  - [The response headers changed](#the-response-headers-changed)
-  - [New: byte progress](#new-byte-progress)
-  - [New: whole prefixes, and a known size to go with them](#new-whole-prefixes-and-a-known-size-to-go-with-them)
-  - [New: a test double](#new-a-test-double)
-  - [`saveToDisk()` has a new `$options` parameter](#savetodisk-has-a-new-options-parameter)
-  - [Event handlers run while the upload is in progress](#event-handlers-run-while-the-upload-is-in-progress)
-  - [Verifying a disk entry costs one request instead of two](#verifying-a-disk-entry-costs-one-request-instead-of-two)
-  - [Memory use](#memory-use)
-
-<!-- /toc -->
-
 Each section below is headed `## Upgrading from <from> to <to>`. Apply every section between the version that is
 installed and the one being moved to, oldest first. The `laravel-zipstream-upgrade` Boost skill works through
 them in that order.
@@ -375,13 +354,13 @@ header. `as()` now throws `InvalidFilenameException` for a name containing CR or
 ### New: byte progress
 
 `StreamedBytes` fires as the archive is written, on every destination, carrying the bytes since the previous
-report. The archive so far is on its context - see above. [Progress](docs/events.md#progress) has an example.
+report. The archive so far is on its context - see above. [Progress](docs/progress.md#progress) has an example.
 
 It is throttled: an event is dispatched at most once per second, and the last one always carries the finished
 size. Change it per archive with `progressEveryBytes()` or `progressEveryInterval()`, or for the application
 with `progress_every` in the config, where a number is bytes and a string is a duration - ISO 8601 (`'PT1S'`)
 or relative (`'500 milliseconds'`). `progressEveryBytes(0)` reports every write.
-[Progress](docs/events.md#progress) lists every accepted format.
+[Progress](docs/progress.md#progress) lists every accepted format.
 
 It sits outside `LifecycleEvent`, because it fires at PHP's write size (8 KB). A handler on the whole lifecycle
 is therefore not flooded by it.

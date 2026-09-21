@@ -2,16 +2,6 @@
 
 # Testing against S3 with MinIO
 
-<!-- toc -->
-
-- [1. Start MinIO](#1-start-minio)
-- [2. Run the tests](#2-run-the-tests)
-- [3. Stop MinIO](#3-stop-minio)
-- [Troubleshooting](#troubleshooting)
-- [Documentation](#documentation)
-
-<!-- /toc -->
-
 `tests/Feature/SaveToS3Test.php` runs a real multipart upload through `saveToDisk()` against an S3-compatible
 server. It catches problems a fake disk can't, such as the AWS SDK rewinding the body after probing its size.
 
@@ -85,5 +75,14 @@ The data lives inside the container, so nothing is kept between runs.
 
 ## Documentation
 
-Pages under `docs/` and this one carry a table of contents between `<!-- toc -->` markers. A test keeps it in
-step with the headings, so a renamed or added section fails the suite until the list is updated.
+The same markdown is published with [VitePress](https://vitepress.dev) at
+<https://exeque.github.io/laravel-zipstream/>. The repository is the source - `.vitepress/config.ts` only adds
+navigation - so a page is edited where it lives and never in two places.
+
+```bash
+npm install
+npm run docs:dev      # local preview with hot reload
+npm run docs:build    # what CI runs: it fails on a dead link
+```
+
+A pull request that touches the markdown builds the site as a check. A push to `main` deploys it.

@@ -12,6 +12,18 @@ composer require exeque/laravel-zipstream
 
 The service provider registers itself. Upgrading from 0.x? See the [upgrade guide](UPGRADE.md).
 
+Both of these are optional - the package works with its own defaults:
+
+```bash
+# Defaults for compression, progress reporting and size formatting
+php artisan vendor:publish --tag="laravel-zipstream-config"
+
+# The progress strings, shipped in 30 languages
+php artisan vendor:publish --tag="laravel-zipstream-translations"
+```
+
+See [Configuration](docs/configuration.md) for what each key does.
+
 ## Basic Usage
 
 ```php
@@ -34,14 +46,9 @@ a local path.
 
 ## Documentation
 
-The full documentation is in [docs/](docs/README.md).
+Documentation: [Here](https://exeque.github.io/laravel-zipstream/)
 
-- [Adding content](docs/content.md) - Disks, local paths, whole directories, raw content, your own models, and per-entry options
-- [Output](docs/output.md) - Response, local path, disk, string or stream - and what happens when one fails
-- [Events](docs/events.md) - Progress, context, error handling and stopping an archive early
-- [Configuration](docs/configuration.md) - Config file, fluent defaults, translations and macros
-- [Testing](docs/testing.md) - `Zip::fake()` and asserting what an archive contained
-- [Upgrade guide](UPGRADE.md) - Moving between major versions
+Upgrading from 0.x? See the [upgrade guide](UPGRADE.md).
 
 ## Testing
 
