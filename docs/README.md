@@ -32,6 +32,7 @@ Also in this repository:
 | `part_size`, `mup_threshold`, `params` | [S3](drivers/s3.md#options) |
 | `stream_reads` and why it matters | [S3](drivers/s3.md#the-disk) |
 | `withContentLength()`, `withKnownSize()` | [Output](output.md) |
+| `manageOutput()`, `timeLimit()` | [Output](output.md#what-the-response-does-to-php) |
 | `on()`, the event list | [Events](events.md) |
 | `Context`, `StreamedBytes` | [Progress](progress.md) |
 | `progressEveryBytes()`, `progressEveryInterval()` | [Progress](progress.md#progress) |

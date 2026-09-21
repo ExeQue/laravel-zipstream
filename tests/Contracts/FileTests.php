@@ -72,17 +72,13 @@ function fileTests(Closure $factory): void
         expect($file->getFileOptions()->lastModified->format('U'))->toEqual($expected->format('U'));
     })->with('timestamps');
 
-    it('can set the zero header', function (bool|null $input) use ($factory) {
+    it('can fall back to the zero header of the level above', function () use ($factory) {
         $file = $factory($this);
 
-        $file->zeroHeader($input);
+        $file->withZeroHeader()->inheritZeroHeader();
 
-        expect($file->getFileOptions()->enableZeroHeader)->toBe($input);
-    })->with([
-        'true'  => [true],
-        'false' => [false],
-        'null'  => [null],
-    ]);
+        expect($file->getFileOptions()->enableZeroHeader)->toBeNull();
+    });
 
     it('can set the zero header (withZeroHeader)', function () use ($factory) {
         $file = $factory($this);
@@ -107,7 +103,7 @@ function fileTests(Closure $factory): void
         $file->compressionMethod(CompressionMethod::DEFLATE);
         $file->deflateLevel(9);
         $file->lastModified(new DateTimeImmutable('2023-01-01 00:00:00'));
-        $file->zeroHeader(true);
+        $file->withZeroHeader();
 
         $default = new FileOptions();
 

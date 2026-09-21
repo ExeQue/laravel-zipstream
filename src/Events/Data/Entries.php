@@ -9,7 +9,9 @@ use Illuminate\Support\Number;
 /**
  * How many entries of the archive are done, as it stood when the event was dispatched.
  *
- * The total is counted before the first byte is written, so it is always known.
+ * The total is counted before the first byte is written, so it is always known. It counts entries in
+ * the archive rather than whatever they were built from: an archive that adds a caption file beside
+ * each photo has two entries per photo, which is worth knowing before showing the number to a user.
  */
 final readonly class Entries
 {

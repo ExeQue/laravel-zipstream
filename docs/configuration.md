@@ -17,6 +17,8 @@ publishing nothing at all, uses the default.
 - `enable_zero_header` (`ZIPSTREAM_ENABLE_ZERO_HEADER`) - true or false
 - `progress_every` (`ZIPSTREAM_PROGRESS_EVERY`) - how often a `StreamedBytes` event is dispatched. A number is
   bytes, a string is a duration. Default: `'PT1S'`
+- `manage_output` - whether `toResponse()` puts PHP's output layer out of the way before streaming: zlib off,
+  buffers flushed, identity encoding. Default: `true`. See [Output](output.md#what-the-response-does-to-php)
 - `size_precision` - decimals in `Bytes::toHuman()`. `2` gives `"5.00 KB of 64.00 MB"`, `0` gives
   `"5 KB of 64 MB"`. Default: `2`. No env var: it is a rendering choice, not a deployment one
 
@@ -57,27 +59,32 @@ Zip::as('archive.zip')
     ->toResponse();
 ```
 
+Every toggle has its opposite, so a default set in one place can be undone in another without passing `false`
+around.
+
 **Compression**
 
 - `store()` - add entries without compressing them
 - `deflate()` / `deflateLevel(int $level)` - compress, and how hard (0-9)
 - `compressionMethod(CompressionMethod $method)` - the same choice, by enum
-- `withZeroHeader()` / `withoutZeroHeader()` / `zeroHeader(bool)` - write sizes after each entry instead of
+- `withZeroHeader()` / `withoutZeroHeader()` / `inheritZeroHeader()` - write sizes after each entry instead of
   before it, which is what lets an entry of unknown size be streamed
 
 **Progress and events**
 
 - `on(callable $handler)` - register a handler, see [Events](events.md)
+- `manageOutput(bool $enabled = true)` / `doesntManageOutput()` - whether a response clears PHP's output layer first
+- `timeLimit(?int $seconds)` - the time limit a streamed response runs under. `0` for none, `null` to leave PHP's alone
 - `progressEveryBytes(int $bytes)` - report progress every so many bytes. `0` reports every write
 - `progressEveryInterval(DateInterval|string $interval)` - report at most that often: `'PT1S'`, `'250ms'`
-- `withContext(array $context)` - attach data handed back on every event about this archive
+- `withContext(array $context)` / `withoutContext()` - attach data handed back on every event about this archive
 
 **Size and contents**
 
 - `as(string $filename)` - name the archive, see [Naming the archive](output.md#naming-the-archive)
-- `withKnownSize()` - work the archive size out before writing, filling in the byte total for progress
-- `withContentLength()` - send a `Content-Length` header, which turns the above on as well
-- `withoutVerification()` - do not check that entries exist as they are added
+- `withKnownSize()` / `withoutKnownSize()` - work the archive size out before writing, filling in the byte total for progress
+- `withContentLength()` / `withoutContentLength()` - send a `Content-Length` header, which turns the above on as well
+- `withVerification()` / `withoutVerification()` - check that entries exist as they are added. On by default
 - `stopOnConnectionAborted()` - stop the archive when the client hangs up
 - `abort(bool $discard = false)` - stop it yourself, see [Stopping early](events.md#stopping-early)
 

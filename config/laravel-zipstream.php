@@ -94,4 +94,23 @@ return [
     |
     */
     'size_precision' => 2,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Manage Output
+    |--------------------------------------------------------------------------
+    |
+    | Whether toResponse() puts PHP's output layer out of the way before it
+    | streams: zlib's output compression off, buffers above it flushed, and an
+    | identity Content-Encoding so a proxy's gzip filter leaves it alone.
+    | Without these a large download stalls rather than streams.
+    |
+    | Turn it off for an application that manages its own buffering. It never
+    | applies under the CLI SAPI, whatever this says.
+    |
+    | Supported: true, false
+    | Default: true
+    |
+    */
+    'manage_output' => true,
 ];

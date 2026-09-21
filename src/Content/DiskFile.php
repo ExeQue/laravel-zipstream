@@ -37,6 +37,19 @@ class DiskFile implements HasContext, StreamableToZip, HasFileOptions, Verifiabl
         return new self($disk, $source, $destination);
     }
 
+    /**
+     * Where this entry is read from, on the disk it belongs to.
+     */
+    public function source(): string
+    {
+        return $this->source;
+    }
+
+    public function disk(): FilesystemAdapter
+    {
+        return $this->disk;
+    }
+
     public function stream()
     {
         $stream = $this->disk->readStream($this->source);

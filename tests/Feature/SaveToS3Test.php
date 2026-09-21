@@ -115,6 +115,31 @@ it('adds a whole prefix from one listing, sizes included', function () {
     $this->disk->deleteDirectory('source');
 });
 
+it('fills in the sizes a known size needs, from one listing per directory', function () {
+    foreach (['a.txt' => 'one', 'b.txt' => 'two', 'nested/c.txt' => 'three'] as $path => $content) {
+        $this->disk->put("sized/$path", $content);
+    }
+
+    $zip = Zip::store()
+        ->withKnownSize()
+        // Handpicked and renamed: nothing here carries a size of its own.
+        ->fromDisk($this->disk, 'sized/a.txt', 'IMG-0001.txt')
+        ->fromDisk($this->disk, 'sized/b.txt', 'IMG-0002.txt')
+        ->fromDisk($this->disk, 'sized/nested/c.txt', 'raw/IMG-0003.txt');
+
+    $entries = Invader::make(Invader::make($zip)->pending)->entries;
+
+    expect(collect($entries)->every(fn ($entry) => $entry->getFileOptions()->exactSize === null))->toBeTrue();
+
+    $size = $zip->saveToDisk($this->disk, $this->path);
+
+    // The listing filled them in, so the size was known before a byte was written.
+    expect(collect($entries)->map(fn ($entry) => $entry->getFileOptions()->exactSize)->all())->toBe([3, 3, 5])
+        ->and($this->disk->size($this->path))->toBe($size);
+
+    $this->disk->deleteDirectory('sized');
+});
+
 it('streams a multipart upload to S3', function () {
     $source = $this->createTestFile();
     file_put_contents($source, random_bytes(1024 * 1024));

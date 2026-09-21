@@ -179,7 +179,7 @@ describe(Builder::class, function () {
         $this->builder
             ->compressionMethod(CompressionMethod::STORE)
             ->deflateLevel(9)
-            ->zeroHeader(true);
+            ->withZeroHeader();
 
         $options = $this->builder->getZipOptions();
 
@@ -710,6 +710,86 @@ describe(Builder::class, function () {
 
         $first->close();
         $second->close();
+    });
+
+    it('takes the output management default from the config', function () {
+        $config = Mockery::mock(Repository::class);
+        $config->shouldReceive('get')->with('laravel-zipstream.manage_output')->andReturnFalse();
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
+
+        $builder = (new Builder($this->filesystemManager, $config))->fromRaw('test.txt', 'content');
+
+        expect($builder->toResponse(null)->headers->has('Content-Encoding'))->toBeFalse();
+    });
+
+    it('declares an identity encoding so a proxy does not buffer the stream', function () {
+        $this->builder->fromRaw('test.txt', 'content');
+
+        expect($this->builder->toResponse(null)->headers->get('Content-Encoding'))->toBe('identity')
+            ->and($this->builder->doesntManageOutput()->toResponse(null)->headers->has('Content-Encoding'))
+            ->toBeFalse();
+    });
+
+    it('leaves the output layer alone under the cli sapi', function () {
+        // Closing the buffers here would flush the test harness' own capture out from under it.
+        $level = ob_get_level();
+        $zlib = ini_get('zlib.output_compression');
+
+        $this->builder->fromRaw('test.txt', 'content');
+
+        captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent());
+
+        expect(ob_get_level())->toBe($level)
+            ->and(ini_get('zlib.output_compression'))->toBe($zlib);
+    });
+
+    it('has a negative for every toggle', function () {
+        $this->builder->fromRaw('test.txt', 'content');
+
+        // manageOutput
+        expect($this->builder->doesntManageOutput()->toResponse(null)->headers->has('Content-Encoding'))
+            ->toBeFalse()
+            ->and($this->builder->manageOutput()->toResponse(null)->headers->get('Content-Encoding'))
+            ->toBe('identity');
+
+        // withContentLength
+        expect($this->builder->store()->withContentLength()->toResponse(null)->headers->has('Content-Length'))
+            ->toBeTrue()
+            ->and($this->builder->withoutContentLength()->toResponse(null)->headers->has('Content-Length'))
+            ->toBeFalse();
+
+        // withKnownSize
+        $invader = Invader::make($this->builder);
+
+        expect($invader->withKnownSize)->toBeFalse();
+
+        $this->builder->withKnownSize();
+
+        expect($invader->withKnownSize)->toBeTrue();
+
+        $this->builder->withoutKnownSize();
+
+        expect($invader->withKnownSize)->toBeFalse();
+
+        // withContext
+        $this->builder->withContext(['job' => 7]);
+
+        expect(Invader::make($this->builder)->events->context()->data)->toBe(['job' => 7]);
+
+        $this->builder->withoutContext();
+
+        expect(Invader::make($this->builder)->events->context()->data)->toBe([]);
+
+        // withVerification
+        $pending = Invader::make($invader->pending);
+
+        $this->builder->withoutVerification();
+
+        expect($pending->verify)->toBeFalse();
+
+        $this->builder->withVerification();
+
+        expect($pending->verify)->toBeTrue();
     });
 
     it('can return a response', function () {

@@ -53,7 +53,7 @@ Everything below lives in `ExeQue\ZipStream\Events`: the events themselves at it
 | `StreamedFile` | `file`, `options` | After a file entry |
 | `StreamingDirectory` | `directory`, `options` | Before a directory entry |
 | `StreamedDirectory` | `directory`, `options` | After a directory entry |
-| `StreamedBytes` | `written`, `total` | As archive bytes are written, throttled |
+| `StreamedBytes` | `written` | Archive bytes, throttled. `written` is the bytes since the previous report, not one write |
 | `SavingToDisk` | `disk`, `path` | Before `saveToDisk()` writes |
 | `SavedToDisk` | `disk`, `path`, `size` | After `saveToDisk()` |
 | `SavingToFilesystem` | `path` | Before `saveToLocal()` writes |

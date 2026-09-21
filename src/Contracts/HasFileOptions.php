@@ -35,11 +35,6 @@ interface HasFileOptions extends HasLastModified, HasComment
     public function deflateLevel(?int $level): static;
 
     /**
-     * Enable or disable zero header for the file.
-     */
-    public function zeroHeader(?bool $enabled): static;
-
-    /**
      * Enable zero header for the file.
      */
     public function withZeroHeader(): static;
@@ -48,4 +43,9 @@ interface HasFileOptions extends HasLastModified, HasComment
      * Disable zero header for the file.
      */
     public function withoutZeroHeader(): static;
+
+    /**
+     * Neither on nor off: inherit whatever the level above decides.
+     */
+    public function inheritZeroHeader(): static;
 }

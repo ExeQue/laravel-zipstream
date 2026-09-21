@@ -39,21 +39,28 @@ trait InteractsWithZipOptions
         return $this;
     }
 
-    public function zeroHeader(?bool $enabled): static
+    public function withZeroHeader(): static
     {
-        $this->zipOptions->enableZeroHeader = $enabled;
+        $this->zipOptions->enableZeroHeader = true;
 
         return $this;
     }
 
-    public function withZeroHeader(): static
-    {
-        return $this->zeroHeader(true);
-    }
-
     public function withoutZeroHeader(): static
     {
-        return $this->zeroHeader(false);
+        $this->zipOptions->enableZeroHeader = false;
+
+        return $this;
+    }
+
+    /**
+     * Neither on nor off: inherit whatever the level above decides.
+     */
+    public function inheritZeroHeader(): static
+    {
+        $this->zipOptions->enableZeroHeader = null;
+
+        return $this;
     }
 
     public function getZipOptions(): ZipOptions

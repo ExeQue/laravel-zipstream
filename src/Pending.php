@@ -96,6 +96,13 @@ class Pending
         return $this;
     }
 
+    public function withVerification(): static
+    {
+        $this->verify = true;
+
+        return $this;
+    }
+
     public function withoutVerification(): static
     {
         $this->verify = false;

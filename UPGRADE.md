@@ -40,17 +40,25 @@ composer require exeque/laravel-zipstream:1.x-dev
 
 ### If you published the config file
 
-1.0 adds one key. A published `config/laravel-zipstream.php` is not updated by composer, so add it by hand -
-republishing with `--force` would throw away whatever you configured:
+1.0 adds three keys. A published `config/laravel-zipstream.php` is not updated by composer, so add them by hand
+- republishing with `--force` would throw away whatever you configured:
 
 ```php
 // How often to dispatch a StreamedBytes event. A number is bytes, a string is an
 // ISO 8601 duration. Use 0 to report every write. Default: 'PT1S'.
 'progress_every' => env('ZIPSTREAM_PROGRESS_EVERY'),
+
+// Decimals in Bytes::toHuman(): 2 gives "5.00 KB of 64.00 MB", 0 gives "5 KB of 64 MB".
+'size_precision' => 2,
+
+// Whether toResponse() clears PHP's output layer before streaming: zlib off, buffers
+// flushed, identity Content-Encoding. Without it a large download stalls.
+'manage_output' => true,
 ```
 
-Leaving it out is safe: the default applies when the key is missing. See
-[byte progress](#new-byte-progress) for what it controls.
+Leaving them out is safe: the defaults apply when a key is missing. See
+[byte progress](#new-byte-progress), [progress](docs/progress.md#progress) and
+[the response](docs/output.md#what-the-response-does-to-php) for what they control.
 
 ---
 
@@ -374,6 +382,38 @@ $recursive)` add every file below a prefix or directory in one pass, with the ex
 already carries. That is what `withContentLength()` and
 `withKnownSize()` need, so a percentage and a `Content-Length` come for free on the common case of "everything
 under here". On S3 it replaces a request per file.
+
+---
+
+### New: the response clears PHP's output layer
+
+`toResponse()` turns off `zlib.output_compression`, flushes any output buffer above it and sends
+`Content-Encoding: identity`, so a large download streams rather than stalls behind something holding the bytes.
+It also drops the execution time limit for the length of the response, and puts it back afterwards.
+
+None of it happens under the CLI SAPI. `doesntManageOutput()`, or `manage_output` in the config, turns it off for
+an application that manages its own buffering, and `timeLimit()` sets a limit of your own.
+
+If you carried any of this yourself - a `closeOutputBuffers()` call, an `ini_set()`, a `set_time_limit()` around
+the download - it can go.
+
+---
+
+### Toggles come in pairs, and take no argument
+
+**Impact: low**
+
+`zeroHeader(?bool $enabled)` is gone. Every switch is two methods now, and neither takes a flag:
+
+| Was | Is |
+|---|---|
+| `zeroHeader(true)` / `zeroHeader(false)` | `withZeroHeader()` / `withoutZeroHeader()` |
+| `zeroHeader(null)` | `inheritZeroHeader()` |
+| `withContentLength(false)` | `withoutContentLength()` |
+
+New alongside them: `withoutKnownSize()`, `withVerification()`, `withoutContext()` and
+`doesntManageOutput()`. A test walks the builder and the entry classes to keep the pairs complete and the flags
+out.
 
 ---
 

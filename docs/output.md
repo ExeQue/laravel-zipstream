@@ -43,9 +43,39 @@ no I/O at all. It only succeeds when **every** entry uses `CompressionMethod::ST
 known `exactSize` (see [Entry sizes](entries.md#entry-sizes)). When it cannot be determined, the header is
 silently omitted and the response falls back to chunked.
 
+Entries added by hand carry no size, so when either of these is on the package fills them in first: local files
+are stat'd, and disk entries are grouped by directory and each directory listed once - the same cost as
+[`fromDiskDirectory()`](content.md#from-a-whole-prefix-or-directory), rather than a request per entry. An entry
+that sets its own `exactSize` is left alone.
+
 `withKnownSize()` runs the same simulation without sending a header. It is what fills in
 `Context::$bytes->total`, so a progress percentage works on any destination - `withContentLength()` turns it on
 by itself.
+
+#### What the response does to PHP
+
+A streamed response only streams if nothing above it is holding the bytes, so `toResponse()` clears the way
+before the first entry:
+
+- `zlib.output_compression` off, since it would hold the whole archive to recompute `Content-Length`.
+- Every output buffer above this one flushed - ZipStream's own `ob_flush()` reaches the topmost one only.
+- `Content-Encoding: identity`, because nginx's gzip filter buffers regardless of `X-Accel-Buffering` unless the
+  response already declares an encoding.
+- No execution time limit, restored to what it was once the response is done.
+
+None of it applies under the CLI SAPI, where a test harness or a worker has its own reasons for the buffers it
+opened.
+
+```php
+Zip::doesntManageOutput()    // an application that manages its own buffering
+Zip::timeLimit(600)          // a limit of your own, in seconds
+Zip::timeLimit(null)         // leave PHP's setting alone
+```
+
+Both the compression setting and the time limit are put back once the response is done, since a worker that
+survives the request would otherwise carry them into the next one.
+
+`manage_output` in the config sets the default for the application.
 
 #### Streaming from S3
 

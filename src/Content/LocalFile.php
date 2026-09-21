@@ -35,6 +35,11 @@ class LocalFile implements HasContext, StreamableToZip, HasFileOptions, Verifiab
         return new static($source, $destination);
     }
 
+    public function source(): string
+    {
+        return $this->source;
+    }
+
     /**
      * @return resource
      */

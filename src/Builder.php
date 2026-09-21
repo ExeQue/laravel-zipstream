@@ -41,6 +41,7 @@ use Illuminate\Support\Traits\Macroable;
 use Psr\Http\Message\StreamInterface;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\HeaderUtils;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse as SymfonyStreamedResponse;
 use Throwable;
 use ZipStream\Exception\OverflowException;
@@ -61,6 +62,10 @@ class Builder implements Responsable, HasZipOptions
 
     private bool $withKnownSize = false;
 
+    private bool $managesOutput;
+
+    private ?int $timeLimit = 0;
+
     /** Memoised: working the size out walks every entry, and both the header and progress want it. */
     private ?int $knownSize = null;
 
@@ -79,6 +84,7 @@ class Builder implements Responsable, HasZipOptions
         $this->pending = new Pending();
 
         $this->progressEvery = ProgressInterval::fromConfig($config->get('laravel-zipstream.progress_every'));
+        $this->managesOutput = (bool) ($config->get('laravel-zipstream.manage_output') ?? true);
 
         $this->prepareZipOptions($config);
         $this->as('archive');
@@ -159,6 +165,123 @@ class Builder implements Responsable, HasZipOptions
     }
 
     /**
+     * Drop whatever context was attached to this archive.
+     */
+    public function withoutContext(): static
+    {
+        $this->events->state()->data = [];
+
+        return $this;
+    }
+
+    /**
+     * Check that each entry exists as it is added. On by default.
+     */
+    public function withVerification(): static
+    {
+        $this->pending->withVerification();
+
+        return $this;
+    }
+
+    /**
+     * Take each entry as given, without checking that it is there.
+     */
+    public function withoutVerification(): static
+    {
+        $this->pending->withoutVerification();
+
+        return $this;
+    }
+
+    /**
+     * Send a Content-Length header with the response, where the size can be known up front.
+     *
+     * Turns withKnownSize() on as well, since it is the same calculation.
+     */
+    public function withContentLength(): static
+    {
+        $this->withContentLength = true;
+
+        return $this->withKnownSize();
+    }
+
+    /**
+     * Send no Content-Length, and stop working the size out for it.
+     */
+    public function withoutContentLength(): static
+    {
+        $this->withContentLength = false;
+
+        return $this->withoutKnownSize();
+    }
+
+    /**
+     * Work out the archive size before writing it, so progress knows what it is working towards.
+     *
+     * Lands on Context::$bytes->total, which is null without it. The size can only be known when every
+     * entry is stored with a known exactSize; it stays null otherwise. Costs one pass over the entries,
+     * and a listing per directory for entries that carry no size of their own.
+     */
+    public function withKnownSize(): static
+    {
+        $this->withKnownSize = true;
+
+        return $this;
+    }
+
+    /**
+     * Do not work the size out up front: Context::$bytes->total stays null.
+     */
+    public function withoutKnownSize(): static
+    {
+        $this->withKnownSize = false;
+
+        return $this;
+    }
+
+    /**
+     * Put PHP's output layer out of the way before streaming a response. On by default.
+     *
+     * It turns off zlib's output compression, which would hold the whole archive to recompute
+     * Content-Length, flushes any output buffer above this one, and declares an identity
+     * Content-Encoding so a proxy's gzip filter leaves the response alone.
+     *
+     * Only ever applies to toResponse(), and never under the CLI SAPI - a test harness capturing the
+     * stream is not something to flush out from under. The default comes from the manage_output config.
+     */
+    public function manageOutput(): static
+    {
+        $this->managesOutput = true;
+
+        return $this;
+    }
+
+    /**
+     * Leave PHP's output layer as it is, for an application that manages its own buffering.
+     */
+    public function doesntManageOutput(): static
+    {
+        $this->managesOutput = false;
+
+        return $this;
+    }
+
+    /**
+     * The time limit to give a streamed response, in seconds.
+     *
+     * Zero, the default, means no limit: an archive is sent at the speed of the client reading it, and
+     * a page-sized max_execution_time is the wrong shape for that. Null leaves PHP's own setting alone.
+     * Restored once the response is done.
+     */
+    public function timeLimit(?int $seconds): static
+    {
+        $this->timeLimit = $seconds;
+
+        return $this;
+    }
+
+    /**
      * Stop the archive after the entry being streamed right now.
      *
      * Meant to be called from an event handler. Remaining entries are skipped and ProcessAborted fires.
@@ -175,34 +298,6 @@ class Builder implements Responsable, HasZipOptions
     public function abort(bool $discard = false): static
     {
         $this->pending->abort($discard);
-
-        return $this;
-    }
-
-    public function withoutVerification(): static
-    {
-        $this->pending->withoutVerification();
-
-        return $this;
-    }
-
-    public function withContentLength(bool $enabled = true): static
-    {
-        $this->withContentLength = $enabled;
-
-        return $this->withKnownSize($enabled);
-    }
-
-    /**
-     * Work out the archive size before writing it, so progress knows what it is working towards.
-     *
-     * Lands on Context::$bytes->total, which is null without it. The size can only be known when every
-     * entry is stored with a known exactSize; it stays null otherwise. Costs one pass over the entries
-     * and no I/O.
-     */
-    public function withKnownSize(bool $enabled = true): static
-    {
-        $this->withKnownSize = $enabled;
 
         return $this;
     }
@@ -691,11 +786,74 @@ class Builder implements Responsable, HasZipOptions
      * Close the archive and report whatever progress the last write left over.
      */
     /**
+     * Fill in the sizes a known size needs, in as few requests as it can.
+     *
+     * An entry added by hand carries no size, and asking the disk for each one is a request per entry.
+     * The listing a directory needs anyway covers every entry in it, so the entries are grouped by disk
+     * and directory and each directory is listed once - the same cost as fromDiskDirectory().
+     *
+     * Only entries without a size of their own are touched, and only when a size is being asked for.
+     */
+    private function fillMissingSizes(): void
+    {
+        /** @var array<string, array{disk: FilesystemAdapter, directory: string, entries: DiskFile[]}> $lookups */
+        $lookups = [];
+
+        foreach ($this->pending->entries() as $entry) {
+            if (!$entry instanceof DiskFile && !$entry instanceof LocalFile) {
+                continue;
+            }
+
+            if ($entry->getFileOptions()->exactSize !== null) {
+                continue;
+            }
+
+            if ($entry instanceof LocalFile) {
+                // A local stat costs nothing worth grouping for.
+                $size = @filesize($entry->source());
+
+                if ($size !== false) {
+                    $entry->exactSize($size);
+                }
+
+                continue;
+            }
+
+            $directory = dirname($entry->source());
+            $directory = $directory === '.' ? '' : $directory;
+            $key = spl_object_id($entry->disk()) . ':' . $directory;
+
+            $lookups[$key] ??= ['disk' => $entry->disk(), 'directory' => $directory, 'entries' => []];
+            $lookups[$key]['entries'][] = $entry;
+        }
+
+        foreach ($lookups as ['disk' => $disk, 'directory' => $directory, 'entries' => $entries]) {
+            $sizes = [];
+
+            foreach ($disk->getDriver()->listContents($directory, false) as $attributes) {
+                if ($attributes->isFile() && $attributes->fileSize() !== null) {
+                    $sizes[$attributes->path()] = $attributes->fileSize();
+                }
+            }
+
+            foreach ($entries as $entry) {
+                if (isset($sizes[ltrim($entry->source(), '/')])) {
+                    $entry->exactSize($sizes[ltrim($entry->source(), '/')]);
+                }
+            }
+        }
+    }
+
+    /**
      * Give progress its target, where one can be had.
      */
     private function resolveKnownSize(): void
     {
         if (!$this->knownSizeResolved) {
+            if ($this->withKnownSize) {
+                $this->fillMissingSizes();
+            }
+
             $this->knownSize = $this->withKnownSize ? $this->calculateSize() : null;
             $this->knownSizeResolved = true;
         }
@@ -720,6 +878,8 @@ class Builder implements Responsable, HasZipOptions
         $headers = [
             'X-Accel-Buffering'   => 'no',
             'Content-Type'        => 'application/zip',
+            // nginx's gzip filter buffers whatever X-Accel-Buffering says, unless an encoding is declared.
+            ...($this->managesOutput ? ['Content-Encoding' => 'identity'] : []),
             // Quotes and non-ASCII in a filename need escaping and an RFC 6266 fallback.
             'Content-Disposition' => HeaderUtils::makeDisposition(
                 HeaderUtils::DISPOSITION_ATTACHMENT,
@@ -734,6 +894,8 @@ class Builder implements Responsable, HasZipOptions
 
         return new SymfonyStreamedResponse(
             function () {
+                $restore = $this->clearTheWay();
+
                 $this->resolveKnownSize();
 
                 $this->events->dispatch(StreamingResponse::class);
@@ -747,6 +909,8 @@ class Builder implements Responsable, HasZipOptions
                 } catch (ArchiveDiscardedException) {
                     // The bytes already sent cannot be recalled, so stopping is all there is to do.
                     return;
+                } finally {
+                    $restore();
                 }
 
                 $this->events->dispatch(StreamedResponse::class);
@@ -759,11 +923,57 @@ class Builder implements Responsable, HasZipOptions
     private function resolvedSize(): ?int
     {
         if (!$this->knownSizeResolved) {
+            $this->fillMissingSizes();
+
             $this->knownSize = $this->calculateSize();
             $this->knownSizeResolved = true;
         }
 
         return $this->knownSize;
+    }
+
+    /**
+     * Put PHP's output layer out of the way for the length of a streamed response.
+     *
+     * Every one of these is invisible until the first large download stalls in production, and none of
+     * them is specific to one application.
+     *
+     * @return callable(): void  Puts back what was changed, once the response is done. Under a worker
+     *                           that survives the request - Octane, RoadRunner - the process is reused,
+     *                           so leaving any of it behind would reach the next request.
+     */
+    private function clearTheWay(): callable
+    {
+        // Symfony skips the SAPIs where output is not going to a socket, and so does this: a test
+        // harness or a queue worker has its own reasons for the buffers it opened.
+        if (!$this->managesOutput || in_array(PHP_SAPI, ['cli', 'phpdbg', 'embed'], true)) {
+            return static fn () => null;
+        }
+
+        // Would hold the whole archive in memory to recompute Content-Length.
+        $zlib = ini_set('zlib.output_compression', '0');
+
+        // ZipStream's own ob_flush() only reaches the topmost buffer; anything above it still swallows
+        // the bytes. Flush them all, rather than discard what an application already wrote.
+        SymfonyResponse::closeOutputBuffers(0, true);
+
+        $timeLimit = null;
+
+        if ($this->timeLimit !== null) {
+            $timeLimit = (int) ini_get('max_execution_time');
+
+            set_time_limit($this->timeLimit);
+        }
+
+        return static function () use ($zlib, $timeLimit): void {
+            if ($zlib !== false) {
+                ini_set('zlib.output_compression', $zlib);
+            }
+
+            if ($timeLimit !== null) {
+                set_time_limit($timeLimit);
+            }
+        };
     }
 
     /**

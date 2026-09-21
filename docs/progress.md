@@ -21,7 +21,9 @@ $zip->on(function (StreamedBytes $event) {
 
 - `id` - The same value for every event of one archive
 - `entry` - What is being streamed right now, or `null` between entries and while the archive is closed
-- `entries` - An `Entries`, counted before the first byte is written
+- `entries` - An `Entries`, counted before the first byte is written. It counts entries in the archive, which is
+  not the same as the records they came from: an archive adding a caption file per photo reports twice the number
+  a caller might expect to show as "of 400 files"
 - `bytes` - A `Bytes`, whose total is only known when the size was worked out up front
 - `data` - Whatever was handed to `withContext()`
 - `entryData()` - The context set on the current entry, as an array
@@ -123,9 +125,11 @@ counter driven by `StreamedFile` alongside it starts at zero rather than one.
 
 `written` is the bytes since the previous report - not the size of one write, since reports are throttled -
 and `total` is the archive so far. By default an event is dispatched at most once per second, because PHP writes
-in 8 KB chunks and few progress bars want 128 updates per megabyte. The context carries the entry counts and the
-entry being written, so one handler covers files and bytes both; the flush at the end makes sure the last report
-lands.
+in 8 KB chunks and few progress bars want 128 updates per megabyte.
+
+**One handler covers both numbers.** The entry counts ride on the byte event, not on `StreamedFile`, so a display
+showing files and bytes needs no second handler and gets both at the throttled rate. The flush at the end makes
+sure the last report lands.
 
 #### Throttling
 

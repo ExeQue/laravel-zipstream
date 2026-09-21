@@ -27,11 +27,6 @@ interface HasZipOptions
     public function deflateLevel(int $level): static;
 
     /**
-     * Enable or disable the default zero header for the zip file.
-     */
-    public function zeroHeader(?bool $enabled): static;
-
-    /**
      * Enable the default zero header for the zip file.
      */
     public function withZeroHeader(): static;
@@ -40,4 +35,9 @@ interface HasZipOptions
      * Disable the default zero header for the zip file.
      */
     public function withoutZeroHeader(): static;
+
+    /**
+     * Neither on nor off: inherit whatever the level above decides.
+     */
+    public function inheritZeroHeader(): static;
 }

@@ -27,7 +27,8 @@ Use this skill when a Laravel application needs to create ZIP files from various
 2. **Explicit Destinations**: Clearly define the path within the ZIP to maintain a clean archive structure.
 3. **Smart Compression**: Use `store()` for already compressed formats (images, videos) and `deflate()` for text-based content to optimize performance.
 4. **Fluent Chaining**: Build the archive by chaining methods starting from the `Zip` facade.
-5. **Type-Hinted Events**: Register handlers with `on(fn (SomeEvent $event) => ...)`. The type hint is the registration - never pass an event name.
+5. **Toggles Come in Pairs**: every `with*()` has a `without*()`, and `manageOutput()` has `doesntManageOutput()`.
+6. **Type-Hinted Events**: Register handlers with `on(fn (SomeEvent $event) => ...)`. The type hint is the registration - never pass an event name.
 
 ## Basic Archive Creation
 To create a simple ZIP and stream it to the browser:
@@ -51,6 +52,9 @@ Zip::fromDisk('s3', 'source/path.pdf', 'internal/name.pdf');
 Zip::fromDiskDirectory('s3', 'events/2026/gala', 'gala');
 Zip::fromDiskDirectory('s3', 'thumbnails', recursive: false);
 Zip::fromLocalDirectory('/var/exports/2026', 'exports');
+
+// withKnownSize()/withContentLength() need an exactSize per entry. Entries without one are
+// grouped by directory and each directory listed once - never a request per file.
 
 // From a Local File Path
 Zip::fromLocal('/absolute/path/to/file.log', 'logs/app.log');
@@ -133,8 +137,11 @@ Zip::as('optimized.zip')
 Choose the appropriate output method:
 
 ```php
-// 1. Stream as Laravel Response
+// 1. Stream as Laravel Response - clears PHP's output layer first (zlib, buffers,
+//    Content-Encoding) so a large download streams rather than stalls
 return Zip::toResponse();
+Zip::doesntManageOutput()->toResponse();  // an app that manages its own buffering
+Zip::timeLimit(600)->toResponse();        // a limit of your own; 0 is the default, meaning none
 
 // 2. Save to Local Path
 Zip::saveToLocal('/path/to/archive.zip');
