@@ -283,7 +283,7 @@ half archive left in a bucket is billed for and could still be handed out:
 | `saveToDisk()` | Returns the size of what was written | Aborts the multipart upload, deletes the key if this call created it, returns `null` |
 | `saveToLocal()` | Returns the size of what was written | Removes the file it was building, returns `null` |
 | `toResponse()` | Stops writing | Stops writing - sent bytes cannot be recalled |
-| `output()` | Returns what was written | Throws `ArchiveDiscardedException`, since there is nothing to clean up |
+| `toString()` | Returns what was written | Throws `ArchiveDiscardedException`, since there is nothing to clean up |
 
 A file that was already at the target path is left alone either way.
 

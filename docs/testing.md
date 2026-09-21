@@ -28,7 +28,7 @@ Zip::assertAdded('IMG-0001.jpg')
 `Zip::fake()` returns the recorder, so the same assertions can be called on it. `entries()` on it hands back the
 entry objects themselves, for a test that needs to look at their options.
 
-A faked archive writes nothing: `saveToDisk()` and `saveToLocal()` return 0, `output()` returns an empty string,
+A faked archive writes nothing: `saveToDisk()` and `saveToLocal()` return 0, `toString()` returns an empty string,
 and the response streams nothing. Keep real storage for tests about the streaming and cleanup paths - see
 [Testing against S3 with MinIO](../contributing/testing-with-minio.md).
 

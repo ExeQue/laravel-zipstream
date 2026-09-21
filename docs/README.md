@@ -21,7 +21,7 @@ Also in this repository:
 | `fromDiskDirectory()`, `fromLocalDirectory()` | [Adding content](content.md#from-a-whole-prefix-or-directory) |
 | `StreamableToZip`, `CanStreamToZip` | [Adding content](content.md#from-custom-classes-contracts) |
 | `exactSize()`, `maxSize()` | [Adding content](content.md#entry-sizes) |
-| `toResponse()`, `saveToDisk()`, `saveToLocal()`, `output()` | [Output](output.md) |
+| `toResponse()`, `saveToDisk()`, `saveToLocal()`, `toString()` | [Output](output.md) |
 | `withContentLength()`, `withKnownSize()` | [Output](output.md) |
 | `on()`, `Context`, `StreamedBytes` | [Events](events.md) |
 | `progressEveryBytes()`, `progressEveryInterval()` | [Events](events.md#progress) |

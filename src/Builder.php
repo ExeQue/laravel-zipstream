@@ -169,7 +169,7 @@ class Builder implements Responsable, HasZipOptions
      * not wanted at all - a cancelled download - rather than when it is wanted short.
      *
      * A response cannot be recalled, so there abort() and abort(discard: true) both simply stop
-     * writing. output() and output(true) have nothing to clean up, and let the discard surface as
+     * writing. toStream() and toString() have nothing to clean up, and let the discard surface as
      * ArchiveDiscardedException.
      */
     public function abort(bool $discard = false): static
@@ -336,13 +336,23 @@ class Builder implements Responsable, HasZipOptions
     }
 
     /**
-     * The stream is built while it is read: it can be read once, front to back, and is not seekable.
+     * The archive as a stream, built while it is read.
+     *
+     * Read once, front to back: it is not seekable, and getSize() is null until it has been read.
      */
-    public function output(bool $stream = false): string|StreamInterface
+    public function toStream(): StreamInterface
     {
-        $archive = $this->lazyArchive();
+        return $this->lazyArchive();
+    }
 
-        return $stream ? $archive : $archive->getContents();
+    /**
+     * The whole archive as a string.
+     *
+     * Holds it in memory, so it is for the small ones - everything else has a destination to stream to.
+     */
+    public function toString(): string
+    {
+        return $this->toStream()->getContents();
     }
 
     public function saveToLocal(string $path): ?int

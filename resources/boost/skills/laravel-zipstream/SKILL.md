@@ -146,11 +146,11 @@ Zip::saveToDisk('s3', 'backups/archive.zip');
 Zip::saveToDisk('s3', 'backups/huge.zip', ['part_size' => 64 * 1024 * 1024]);
 
 // 4. Get as String
-$content = Zip::output();
+$content = Zip::toString();
 
 // 5. Get as PSR-7 Stream - built as it is read, so read it once, front to back.
 // It is not seekable and getSize() is null.
-$stream = Zip::output(true);
+$stream = Zip::toStream();
 ```
 
 If `saveToDisk()` or `saveToLocal()` fails part-way, it deletes the target path, but only if that call created

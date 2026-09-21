@@ -65,10 +65,17 @@ class FakeBuilder extends Builder
         ]);
     }
 
-    public function output(bool $stream = false): string|StreamInterface
+    public function toStream(): StreamInterface
     {
         $this->fake->recordSave($this, 'output', null);
 
-        return $stream ? Utils::streamFor('') : '';
+        return Utils::streamFor('');
+    }
+
+    public function toString(): string
+    {
+        $this->fake->recordSave($this, 'output', null);
+
+        return '';
     }
 }

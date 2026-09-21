@@ -206,7 +206,7 @@ describe(Builder::class, function () {
 
     it('can output as string', function () {
         $this->builder->fromRaw('test.txt', 'content');
-        $output = $this->builder->output();
+        $output = $this->builder->toString();
 
         expect($output)->toBeString()
             ->and($output)->not->toBeEmpty();
@@ -214,7 +214,7 @@ describe(Builder::class, function () {
 
     it('can output as stream', function () {
         $this->builder->fromRaw('test.txt', 'content');
-        $output = $this->builder->output(true);
+        $output = $this->builder->toStream();
 
         expect($output)->toBeInstanceOf(StreamInterface::class);
 
@@ -232,7 +232,7 @@ describe(Builder::class, function () {
             $this->builder->fromLocal($source, "file-$i.bin");
         }
 
-        $output = $this->builder->store()->output(true);
+        $output = $this->builder->store()->toStream();
 
         memory_reset_peak_usage();
         $baseline = memory_get_usage();
@@ -500,15 +500,15 @@ describe(Builder::class, function () {
             ->fromRaw('test.txt', 'content');
 
         match ($path) {
-            'output'      => $this->builder->output(),
-            'outputTrue'  => $this->builder->output(true)->getContents(),
+            'output'      => $this->builder->toString(),
+            'stream'      => $this->builder->toStream()->getContents(),
             'saveToLocal' => $this->builder->saveToLocal($this->createTestFile()),
             'saveToDisk'  => $this->builder->saveToDisk($disk, 'archive.zip'),
             'toResponse'  => captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent()),
         };
 
         expect($total)->toBeGreaterThan(0);
-    })->with(['output', 'outputTrue', 'saveToLocal', 'saveToDisk', 'toResponse']);
+    })->with(['output', 'stream', 'saveToLocal', 'saveToDisk', 'toResponse']);
 
     it('does not report archive bytes to a lifecycle handler', function () {
         $types = [];

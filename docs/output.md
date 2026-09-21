@@ -94,15 +94,21 @@ Zip::fromDisk('s3', 'huge.bin')
 ```
 
 ## Get as String or Stream
-```php
-// Get as string
-$content = Zip::fromRaw('a.txt', '...')->output();
 
-// Get as PSR-7 Stream
-$stream = Zip::fromRaw('a.txt', '...')->output(true);
+```php
+// The whole archive in memory
+$content = Zip::fromRaw('a.txt', '...')->toString();
+
+// A PSR-7 stream, built as it is read
+$stream = Zip::fromRaw('a.txt', '...')->toStream();
 ```
 
-The stream builds the archive as it is read, so it can be read once, front to back, and is not seekable.
+`toStream()` builds the archive as it is read, so it can be read once, front to back. It is not seekable, and
+`getSize()` is null. `toString()` reads it to the end for you, which means the whole archive is in memory -
+fine for a handful of small entries, and the wrong tool for anything else on this page.
+
+Both are the only destinations with nothing to clean up, so `abort(discard: true)` surfaces there as
+`ArchiveDiscardedException` rather than returning null.
 
 ---
 

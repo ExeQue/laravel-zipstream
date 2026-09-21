@@ -4,7 +4,7 @@
 
 - [Upgrading from 0.x to 1.0](#upgrading-from-0x-to-10)
   - [If you published the config file](#if-you-published-the-config-file)
-  - [`output(true)` returns a read-once stream](#outputtrue-returns-a-read-once-stream)
+  - [`output()` is now `toString()` and `toStream()`](#output-is-now-tostring-and-tostream)
   - [A failed `saveToDisk()` cleans up after itself](#a-failed-savetodisk-cleans-up-after-itself)
   - [`ProcessError` no longer catches exceptions from your event handlers](#processerror-no-longer-catches-exceptions-from-your-event-handlers)
   - [Events are objects, and a handler declares what it listens for](#events-are-objects-and-a-handler-declares-what-it-listens-for)
@@ -27,17 +27,17 @@ them in that order.
 
 ## Upgrading from 0.x to 1.0
 
-1.0 stops `saveToDisk()` and `output(true)` from buffering the whole archive. Both now build the archive while it
+1.0 stops `saveToDisk()` and the stream output from buffering the whole archive. Both now build the archive while it
 is being read, so memory and temp disk use stay constant no matter how large the archive is.
 
 Events also became objects, which touches every handler you have registered. Read the sections below if you
-use events, `output(true)`, extend `Builder`, or rely on what happens when `saveToDisk()` fails.
+use events, `output()`, extend `Builder`, or rely on what happens when `saveToDisk()` fails.
 
 Everything that breaks, in one list:
 
 | What | Where |
 |---|---|
-| `output(true)` is read-once and not seekable | [read-once stream](#outputtrue-returns-a-read-once-stream) |
+| `output()` split into `toString()` and `toStream()`, which is read-once | [output](#output-is-now-tostring-and-tostream) |
 | A failed `saveToDisk()` aborts the upload and cleans up the path | [cleans up after itself](#a-failed-savetodisk-cleans-up-after-itself) |
 | `ProcessError` no longer catches your handlers' exceptions | [ProcessError](#processerror-no-longer-catches-exceptions-from-your-event-handlers) |
 | `EventType` is gone; handlers declare what they listen for | [events are objects](#events-are-objects-and-a-handler-declares-what-it-listens-for) |
@@ -75,26 +75,36 @@ Leaving it out is safe: the default applies when the key is missing. See
 
 ---
 
-### `output(true)` returns a read-once stream
+### `output()` is now `toString()` and `toStream()`
 
-**Impact: high, if you use `output(true)`**
+**Impact: high, if you use `output()`**
 
-Before, `output(true)` built the complete archive in `php://temp` and returned a rewound, seekable stream. It now
-returns a stream that builds the archive as you read it.
+A boolean decided whether `output()` handed back a string or a stream, which made its return type a union
+nothing could reason about. It is two methods now, named like the rest of the family - `toResponse()`,
+`saveToDisk()`, `saveToLocal()`:
 
-| | 0.x | 1.0 |
+| 0.x | 1.0 |
+|---|---|
+| `output()` | `toString()` |
+| `output(true)` | `toStream()` |
+
+`toString()` still holds the whole archive in memory. `toStream()` is where the behaviour changed: it used to
+build the complete archive in `php://temp` and return a rewound, seekable stream, and it now returns one that
+builds the archive as you read it.
+
+| | 0.x `output(true)` | 1.0 `toStream()` |
 |---|---|---|
-| When the archive is built | During `output(true)` | While the stream is read |
+| When the archive is built | During the call | While the stream is read |
 | `isSeekable()` | `true` | `false` |
 | `seek()` / `rewind()` | Works | Throws `RuntimeException` |
 | `getSize()` | Archive size | `null` |
 | Readable more than once | Yes, after `rewind()` | No |
-| Where build errors are thrown | From `output(true)` | From `read()` / `getContents()` |
+| Where build errors are thrown | From the call | From `read()` / `getContents()` |
 
 Read the stream once, front to back:
 
 ```php
-$stream = Zip::fromDisk('s3', 'report.pdf')->output(true);
+$stream = Zip::fromDisk('s3', 'report.pdf')->toStream();
 
 while (! $stream->eof()) {
     echo $stream->read(1024 * 1024);
@@ -106,7 +116,7 @@ If you need a seekable stream or the size up front, buffer it yourself:
 ```php
 $buffered = \GuzzleHttp\Psr7\Utils::streamFor(fopen('php://temp', 'w+b'));
 
-\GuzzleHttp\Psr7\Utils::copyToStream(Zip::fromDisk('s3', 'report.pdf')->output(true), $buffered);
+\GuzzleHttp\Psr7\Utils::copyToStream(Zip::fromDisk('s3', 'report.pdf')->toStream(), $buffered);
 
 $buffered->rewind();
 $size = $buffered->getSize();
@@ -114,11 +124,11 @@ $size = $buffered->getSize();
 
 You can also save the archive with `saveToLocal()` and open the file.
 
-**Changes to the builder after `output(true)` are included.** Because the archive is built later, any file added
-to the builder after `output(true)` but before the stream is read ends up in the archive. Configure the builder
-completely before you call `output(true)`.
+**Changes to the builder after `toStream()` are included.** Because the archive is built later, any file added
+to the builder after `toStream()` but before the stream is read ends up in the archive. Configure the builder
+completely before you call `toStream()`.
 
-`output()` without arguments still returns the archive as a string.
+`toString()` without arguments still returns the archive as a string.
 
 ---
 
