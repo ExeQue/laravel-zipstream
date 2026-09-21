@@ -2,6 +2,7 @@
 
 namespace ExeQue\ZipStream\Contracts;
 
+use ExeQue\ZipStream\Options\ZipOptions;
 use ZipStream\CompressionMethod;
 
 interface HasZipOptions
@@ -37,7 +38,12 @@ interface HasZipOptions
     public function withoutZeroHeader(): static;
 
     /**
-     * Neither on nor off: inherit whatever the level above decides.
+     * Drop the override and go back to the configured default.
      */
     public function inheritZeroHeader(): static;
+
+    /**
+     * The options as they stand, after every default and override.
+     */
+    public function getZipOptions(): ZipOptions;
 }

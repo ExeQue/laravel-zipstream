@@ -68,7 +68,8 @@ around.
 - `deflate()` / `deflateLevel(int $level)` - compress, and how hard (0-9)
 - `compressionMethod(CompressionMethod $method)` - the same choice, by enum
 - `withZeroHeader()` / `withoutZeroHeader()` / `inheritZeroHeader()` - write sizes after each entry instead of
-  before it, which is what lets an entry of unknown size be streamed
+  before it, which is what lets an entry of unknown size be streamed. `inherit` drops the override: back to the
+  config on the archive, back to the archive on an entry
 
 **Progress and events**
 

@@ -2,79 +2,49 @@
 
 namespace ExeQue\ZipStream;
 
-use Closure;
-use DateInterval;
+use ExeQue\ZipStream\Concerns\AddsContent;
+use ExeQue\ZipStream\Concerns\InteractsWithKnownSize;
+use ExeQue\ZipStream\Concerns\InteractsWithOutputLayer;
+use ExeQue\ZipStream\Concerns\InteractsWithProgress;
 use ExeQue\ZipStream\Concerns\InteractsWithZipOptions;
-use ExeQue\ZipStream\Content\Directory;
-use ExeQue\ZipStream\Content\DiskFile;
-use ExeQue\ZipStream\Content\LocalFile;
-use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Contracts\CanStreamToZip;
-use ExeQue\ZipStream\Contracts\HasZipOptions;
-use ExeQue\ZipStream\Contracts\StreamableToZip;
-use ExeQue\ZipStream\Events\Contracts\Event;
-use ExeQue\ZipStream\Events\Data\Context;
+use ExeQue\ZipStream\Concerns\ProducesArchiveStreams;
+use ExeQue\ZipStream\Concerns\SavesToDisk;
+use ExeQue\ZipStream\Contracts\ArchiveBuilder;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\SavedToDisk;
 use ExeQue\ZipStream\Events\SavedToFilesystem;
-use ExeQue\ZipStream\Events\SavingToDisk;
 use ExeQue\ZipStream\Events\SavingToFilesystem;
-use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamedResponse;
 use ExeQue\ZipStream\Events\StreamingResponse;
 use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
 use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use ExeQue\ZipStream\Options\ProgressInterval;
-use Fiber;
-use GuzzleHttp\Psr7\FnStream;
-use GuzzleHttp\Psr7\PumpStream;
 use GuzzleHttp\Psr7\Stream;
-use GuzzleHttp\Psr7\StreamWrapper;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
-use Illuminate\Contracts\Support\Responsable;
-use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\File as Filesystem;
 use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Macroable;
-use Psr\Http\Message\StreamInterface;
-use RuntimeException;
 use Symfony\Component\HttpFoundation\HeaderUtils;
-use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse as SymfonyStreamedResponse;
-use Throwable;
-use ZipStream\Exception\OverflowException;
-use ZipStream\Exception\SimulationFileUnknownException;
 use ZipStream\OperationMode;
 use ZipStream\ZipStream;
 
-class Builder implements Responsable, HasZipOptions
+class Builder implements ArchiveBuilder
 {
+    // In the order an archive goes through them.
+    use AddsContent;
     use InteractsWithZipOptions;
+    use InteractsWithKnownSize;
+    use InteractsWithProgress;
+    use ProducesArchiveStreams;
+    use SavesToDisk;
+    use InteractsWithOutputLayer;
     use Macroable;
 
     private string $filename;
 
     private Pending $pending;
-
-    private bool $withContentLength = false;
-
-    private bool $withKnownSize = false;
-
-    private bool $managesOutput;
-
-    private ?int $timeLimit = 0;
-
-    /** Memoised: working the size out walks every entry, and both the header and progress want it. */
-    private ?int $knownSize = null;
-
-    private bool $knownSizeResolved = false;
-
-    private ProgressInterval $progressEvery;
-
-    /** Flushes whatever progress the last write left unreported. Set per archive. */
-    private ?Closure $flushProgress = null;
 
     public function __construct(
         private Factory $filesystemManager,
@@ -88,33 +58,6 @@ class Builder implements Responsable, HasZipOptions
 
         $this->prepareZipOptions($config);
         $this->as('archive');
-    }
-
-    /**
-     * Report progress once this many bytes have been written.
-     *
-     * StreamedBytes would otherwise fire at PHP's 8 KB write size. Pass 0 for every write. The final
-     * event always carries the finished size, whatever the threshold.
-     */
-    public function progressEveryBytes(int $bytes): static
-    {
-        $this->progressEvery = ProgressInterval::bytes($bytes);
-
-        return $this;
-    }
-
-    /**
-     * Report progress at most this often, whatever the throughput.
-     *
-     * Takes a DateInterval or an ISO 8601 duration such as "PT1S". Better than a byte threshold for a
-     * progress bar: a fixed number of bytes fires thousands of times a second on a local disk and twice
-     * a second on a slow upload.
-     */
-    public function progressEveryInterval(DateInterval|string $interval): static
-    {
-        $this->progressEvery = ProgressInterval::every($interval);
-
-        return $this;
     }
 
     /**
@@ -147,14 +90,6 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    /**
-     * Attach whatever the application needs on every event about this archive.
-     *
-     * Merged into Context::$data. For something belonging to a single entry, use context() on the
-     * entry instead - it comes back on the events about that entry.
-     *
-     * @param  array<string, mixed>  $context
-     */
     public function withContext(array $context): static
     {
         $state = $this->events->state();
@@ -164,9 +99,6 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    /**
-     * Drop whatever context was attached to this archive.
-     */
     public function withoutContext(): static
     {
         $this->events->state()->data = [];
@@ -174,9 +106,6 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    /**
-     * Check that each entry exists as it is added. On by default.
-     */
     public function withVerification(): static
     {
         $this->pending->withVerification();
@@ -184,9 +113,6 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    /**
-     * Take each entry as given, without checking that it is there.
-     */
     public function withoutVerification(): static
     {
         $this->pending->withoutVerification();
@@ -194,260 +120,11 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    /**
-     * Send a Content-Length header with the response, where the size can be known up front.
-     *
-     * Turns withKnownSize() on as well, since it is the same calculation.
-     */
-    public function withContentLength(): static
-    {
-        $this->withContentLength = true;
-
-        return $this->withKnownSize();
-    }
-
-    /**
-     * Send no Content-Length, and stop working the size out for it.
-     */
-    public function withoutContentLength(): static
-    {
-        $this->withContentLength = false;
-
-        return $this->withoutKnownSize();
-    }
-
-    /**
-     * Work out the archive size before writing it, so progress knows what it is working towards.
-     *
-     * Lands on Context::$bytes->total, which is null without it. The size can only be known when every
-     * entry is stored with a known exactSize; it stays null otherwise. Costs one pass over the entries,
-     * and a listing per directory for entries that carry no size of their own.
-     */
-    public function withKnownSize(): static
-    {
-        $this->withKnownSize = true;
-
-        return $this;
-    }
-
-    /**
-     * Do not work the size out up front: Context::$bytes->total stays null.
-     */
-    public function withoutKnownSize(): static
-    {
-        $this->withKnownSize = false;
-
-        return $this;
-    }
-
-    /**
-     * Put PHP's output layer out of the way before streaming a response. On by default.
-     *
-     * It turns off zlib's output compression, which would hold the whole archive to recompute
-     * Content-Length, flushes any output buffer above this one, and declares an identity
-     * Content-Encoding so a proxy's gzip filter leaves the response alone.
-     *
-     * Only ever applies to toResponse(), and never under the CLI SAPI - a test harness capturing the
-     * stream is not something to flush out from under. The default comes from the manage_output config.
-     */
-    public function manageOutput(): static
-    {
-        $this->managesOutput = true;
-
-        return $this;
-    }
-
-    /**
-     * Leave PHP's output layer as it is, for an application that manages its own buffering.
-     */
-    public function doesntManageOutput(): static
-    {
-        $this->managesOutput = false;
-
-        return $this;
-    }
-
-    /**
-     * The time limit to give a streamed response, in seconds.
-     *
-     * Zero, the default, means no limit: an archive is sent at the speed of the client reading it, and
-     * a page-sized max_execution_time is the wrong shape for that. Null leaves PHP's own setting alone.
-     * Restored once the response is done.
-     */
-    public function timeLimit(?int $seconds): static
-    {
-        $this->timeLimit = $seconds;
-
-        return $this;
-    }
-
-    /**
-     * Stop the archive after the entry being streamed right now.
-     *
-     * Meant to be called from an event handler. Remaining entries are skipped and ProcessAborted fires.
-     * The archive is then finished, so what has been written stays a valid - if incomplete - zip.
-     *
-     * With $discard the archive is thrown away instead: an S3 multipart upload is aborted, a file this
-     * call created is removed, and saveToDisk()/saveToLocal() return null. Use it when the archive is
-     * not wanted at all - a cancelled download - rather than when it is wanted short.
-     *
-     * A response cannot be recalled, so there abort() and abort(discard: true) both simply stop
-     * writing. toStream() and toString() have nothing to clean up, and let the discard surface as
-     * ArchiveDiscardedException.
-     */
     public function abort(bool $discard = false): static
     {
         $this->pending->abort($discard);
 
         return $this;
-    }
-
-    public function add(StreamableToZip|CanStreamToZip|Directory $content, ?callable $modify = null): static
-    {
-        $modify = $this->resolveModifierCallback($modify);
-
-        $this->pending->add(
-            tap($content, $modify),
-        );
-
-        return $this;
-    }
-
-    public function fromDisk(
-        string|FilesystemAdapter $disk,
-        string $source,
-        ?string $destination = null,
-        ?callable $modify = null,
-    ): static {
-        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-
-        $destination ??= basename($source);
-
-        return $this->add(DiskFile::make($disk, $source, $destination), $modify);
-    }
-
-    /**
-     * Add every file under a prefix, with the sizes the listing already carries.
-     *
-     * One listing instead of a request per file: with exact sizes in hand, withContentLength() and
-     * withKnownSize() work without asking the disk anything further. Entries out of a listing are known
-     * to exist, so they skip verification.
-     *
-     * @param  string|null  $destination  The folder inside the archive. Defaults to the source's own name.
-     * @param  callable(DiskFile): void|null  $modify
-     */
-    public function fromDiskDirectory(
-        string|FilesystemAdapter $disk,
-        string $source,
-        ?string $destination = null,
-        bool $recursive = true,
-        ?callable $modify = null,
-    ): static {
-        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-
-        $source = trim($source, '/');
-        $destination = trim($destination ?? basename($source), '/');
-        $modify = $this->resolveModifierCallback($modify);
-
-        foreach ($disk->getDriver()->listContents($source, $recursive) as $attributes) {
-            if (!$attributes->isFile()) {
-                continue;
-            }
-
-            $file = DiskFile::make(
-                $disk,
-                $attributes->path(),
-                trim($destination . '/' . Str::after($attributes->path(), $source), '/'),
-            );
-
-            if ($attributes->fileSize() !== null) {
-                $file->exactSize($attributes->fileSize());
-            }
-
-            if ($attributes->lastModified() !== null) {
-                $file->lastModified($attributes->lastModified());
-            }
-
-            $this->pending->add(tap($file, $modify), verify: false);
-        }
-
-        return $this;
-    }
-
-    public function fromLocal(
-        string $source,
-        ?string $destination = null,
-        ?callable $modify = null,
-    ): static {
-        return $this->add(LocalFile::make($source, $destination), $modify);
-    }
-
-    /**
-     * Add every file under a local directory, with the sizes the filesystem already knows.
-     *
-     * The local counterpart of fromDiskDirectory(): one walk, no request per file, and exact sizes
-     * ready for withContentLength() and withKnownSize().
-     *
-     * @param  string|null  $destination  The folder inside the archive. Defaults to the directory's own name.
-     * @param  callable(LocalFile): void|null  $modify
-     */
-    public function fromLocalDirectory(
-        string $source,
-        ?string $destination = null,
-        bool $recursive = true,
-        ?callable $modify = null,
-    ): static {
-        $source = rtrim($source, '/\\');
-        $destination = trim($destination ?? basename($source), '/');
-        $modify = $this->resolveModifierCallback($modify);
-
-        $files = $recursive ? Filesystem::allFiles($source) : Filesystem::files($source);
-
-        foreach ($files as $file) {
-            $entry = LocalFile::make(
-                $file->getPathname(),
-                trim($destination . '/' . str_replace('\\', '/', $file->getRelativePathname()), '/'),
-            );
-
-            $entry->exactSize($file->getSize())->lastModified($file->getMTime());
-
-            $this->pending->add(tap($entry, $modify), verify: false);
-        }
-
-        return $this;
-    }
-
-    public function fromRaw(
-        string $destination,
-        string $content,
-        ?callable $modify = null,
-    ): static {
-        return $this->add(Raw::make($destination, $content), $modify);
-    }
-
-    public function emptyDirectory(string $directory, ?callable $modify = null): static
-    {
-        return $this->add(new Directory($directory), $modify);
-    }
-
-    /**
-     * The archive as a stream, built while it is read.
-     *
-     * Read once, front to back: it is not seekable, and getSize() is null until it has been read.
-     */
-    public function toStream(): StreamInterface
-    {
-        return $this->lazyArchive();
-    }
-
-    /**
-     * The whole archive as a string.
-     *
-     * Holds it in memory, so it is for the small ones - everything else has a destination to stream to.
-     */
-    public function toString(): string
-    {
-        return $this->toStream()->getContents();
     }
 
     public function saveToLocal(string $path): ?int
@@ -494,214 +171,6 @@ class Builder implements Responsable, HasZipOptions
         return $size;
     }
 
-    /**
-     * Stream the archive to a disk while it is being built, see lazyArchive().
-     *
-     * @param  array<string, mixed>  $options  Passed on to the disk, e.g. ['part_size' => ...] for S3.
-     * @return int|null The archive size, or null if the disk stopped reading before the archive was finished.
-     */
-    public function saveToDisk(string|FilesystemAdapter $disk, string $path, array $options = []): ?int
-    {
-        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-
-        $this->events->dispatch(SavingToDisk::class, $disk, $path);
-
-        // Only an S3 disk hands out a client, and only S3 can leave a multipart upload behind.
-        $client = method_exists($disk, 'getClient') ? $disk->getClient() : null;
-        $upload = null;
-
-        if ($client !== null) {
-            $options = $this->capturingMultipartUpload($options, $upload);
-        }
-
-        $existed = $disk->exists($path);
-
-        $size = null;
-        $failure = null;
-
-        $handle = StreamWrapper::getResource($this->rewindableHead($this->lazyArchive($size, $failure)));
-
-        try {
-            $disk->writeStream($path, $handle, $options);
-        } catch (Throwable $e) {
-            $failure ??= $e;
-        } finally {
-            // A disk may already have closed it through the PSR-7 stream it wrapped it in.
-            if (is_resource($handle)) {
-                fclose($handle);
-            }
-        }
-
-        if ($failure !== null) {
-            $this->cleanUpFailedWrite($disk, $path, $existed, $client, $upload);
-
-            if ($failure instanceof ArchiveDiscardedException) {
-                return null;
-            }
-
-            // The disk wraps (or, when not set to throw, swallows) errors raised while reading.
-            throw $failure;
-        }
-
-        $this->events->dispatch(SavedToDisk::class, $disk, $path, $size);
-
-        return $size;
-    }
-
-    /**
-     * Remember the multipart upload S3 starts, so that a failed write can abort it.
-     *
-     * @param  array<string, mixed>  $options
-     * @param  array<string, string>|null  $upload  Receives Bucket/Key/UploadId once a part is on its way.
-     * @return array<string, mixed>
-     */
-    private function capturingMultipartUpload(array $options, ?array &$upload): array
-    {
-        $before = $options['before_upload'] ?? null;
-
-        $options['before_upload'] = function ($command) use ($before, &$upload): void {
-            if (isset($command['UploadId'])) {
-                $upload = [
-                    'Bucket'   => $command['Bucket'],
-                    'Key'      => $command['Key'],
-                    'UploadId' => $command['UploadId'],
-                ];
-            }
-
-            if ($before !== null) {
-                $before($command);
-            }
-        };
-
-        return $options;
-    }
-
-    /**
-     * Leave the disk as it was before the failed write.
-     *
-     * @param  array<string, string>|null  $upload
-     */
-    private function cleanUpFailedWrite(
-        FilesystemAdapter $disk,
-        string $path,
-        bool $existed,
-        mixed $client,
-        ?array $upload,
-    ): void {
-        if ($client !== null && $upload !== null) {
-            try {
-                // The SDK keeps the parts of a failed multipart upload, billed and hidden from a listing.
-                $client->abortMultipartUpload($upload);
-            } catch (Throwable) {
-                // Nothing left to do about it - the original failure is the one worth reporting.
-            }
-        }
-
-        if (! $existed) {
-            // Only what this call created: a file that was already there is not ours to remove.
-            $disk->delete($path);
-        }
-    }
-
-    /**
-     * A stream that builds the archive as it is read.
-     *
-     * ZipStream pushes its output while readers (Flysystem, the AWS SDK) pull at their own pace. The archive
-     * is produced inside a fiber that the reader drives: every read resumes the fiber just far enough to
-     * supply it, so the archive is never buffered as a whole.
-     *
-     * @param  int|null  $size  Receives the archive size once it has been read to the end.
-     * @param  Throwable|null  $failure  Receives what went wrong while building, before it is rethrown to the reader.
-     */
-    private function lazyArchive(?int &$size = null, ?Throwable &$failure = null): PumpStream
-    {
-        $this->resolveKnownSize();
-
-        $fiber = new Fiber(function () use (&$size) {
-            // Every slot a decorator might proxy has to be here: FnStream::decorate() fills the ones
-            // it isn't given with a callable into this stream, and a missing slot throws when called -
-            // including from __destruct(), where the stack no longer points at anything useful.
-            $zipStream = $this->prepareZipStream(new FnStream([
-                'isReadable'  => fn () => false,
-                'isWritable'  => fn () => true,
-                'isSeekable'  => fn () => false,
-                'close'       => fn () => null,
-                'detach'      => fn () => null,
-                'getSize'     => fn () => null,
-                'getMetadata' => fn (?string $key = null) => $key === null ? [] : null,
-                'write'       => function (string $data): int {
-                    Fiber::suspend($data);
-
-                    return strlen($data);
-                },
-            ]));
-
-            $this->pending->process($zipStream, $this->events, $this->getZipOptions());
-
-            $size = $this->finishArchive($zipStream);
-        });
-
-        return new PumpStream(function () use ($fiber, &$failure) {
-            try {
-                $data = $fiber->isStarted() ? $fiber->resume() : $fiber->start();
-            } catch (Throwable $e) {
-                // Throwing through the read aborts the consumer instead of completing a truncated archive.
-                throw $failure = $e;
-            }
-
-            return $fiber->isTerminated() ? false : $data;
-        });
-    }
-
-    /**
-     * Allow rewinding to the start while no more than the first $limit bytes have been read.
-     *
-     * A userland stream resource always reports itself as seekable, so the AWS SDK reads up to
-     * 5 MB (MultipartUploader::PART_MIN_SIZE) to probe the size of the body and then rewinds.
-     * Remembering that head satisfies it without buffering the rest of the archive.
-     */
-    private function rewindableHead(StreamInterface $stream, int $limit = 6 * 1024 * 1024): StreamInterface
-    {
-        // ponytail: 1 MB of slack over the 5 MB probe covers PHP's read-ahead on the resource.
-        $head = '';
-        $position = 0;
-        $rewindable = true;
-
-        return FnStream::decorate($stream, [
-            'read' => function (int $length) use ($stream, $limit, &$head, &$position, &$rewindable): string {
-                if ($position < strlen($head)) {
-                    $data = substr($head, $position, $length);
-                } else {
-                    $data = $stream->read($length);
-
-                    if ($rewindable && strlen($head) + strlen($data) <= $limit) {
-                        $head .= $data;
-                    } else {
-                        $head = '';
-                        $rewindable = false;
-                    }
-                }
-
-                $position += strlen($data);
-
-                return $data;
-            },
-            'seek' => function (int $offset, int $whence = SEEK_SET) use (&$position, &$rewindable): void {
-                if (! $rewindable || $offset !== 0 || $whence !== SEEK_SET) {
-                    throw new RuntimeException('The archive can only be rewound to the start within its first bytes.');
-                }
-
-                $position = 0;
-            },
-            'tell' => function () use (&$position): int {
-                return $position;
-            },
-            'eof' => function () use ($stream, &$head, &$position): bool {
-                return $position >= strlen($head) && $stream->eof();
-            },
-        ]);
-    }
-
     private function prepareZipStream(
         mixed $outputStream = null,
         OperationMode $operationMode = OperationMode::NORMAL,
@@ -729,148 +198,6 @@ class Builder implements Responsable, HasZipOptions
             sendHttpHeaders: false,
             flushOutput: $flush,
         );
-    }
-
-    /**
-     * Report archive bytes as they are written, on every destination.
-     *
-     * Counts the archive's own output rather than the bytes read from the sources, so it also
-     * covers the central directory a zip ends with.
-     */
-    private function reportingProgress(StreamInterface $stream): StreamInterface
-    {
-        $this->flushProgress = null;
-
-        if (! $this->events->hasHandlerFor(StreamedBytes::class)) {
-            return $stream;
-        }
-
-        $state = $this->events->state();
-        $pending = 0;
-        $reportedAt = microtime(true);
-
-        $report = function () use (&$pending, &$reportedAt): void {
-            if ($pending === 0) {
-                return;
-            }
-
-            $this->events->dispatch(StreamedBytes::class, $pending);
-
-            $pending = 0;
-            $reportedAt = microtime(true);
-        };
-
-        // Without this the tail of the archive goes unreported and progress never reaches the size.
-        $this->flushProgress = $report;
-
-        return FnStream::decorate($stream, [
-            'write' => function (string $data) use ($stream, $state, &$pending, &$reportedAt, $report): int {
-                $written = $stream->write($data);
-                $state->bytesDone += $written;
-                $pending += $written;
-
-                $due = $this->progressEvery->isTimeBased()
-                    ? microtime(true) - $reportedAt >= $this->progressEvery->seconds
-                    : $pending >= $this->progressEvery->bytes;
-
-                if ($due) {
-                    $report();
-                }
-
-                return $written;
-            },
-        ]);
-    }
-
-    /**
-     * Close the archive and report whatever progress the last write left over.
-     */
-    /**
-     * Fill in the sizes a known size needs, in as few requests as it can.
-     *
-     * An entry added by hand carries no size, and asking the disk for each one is a request per entry.
-     * The listing a directory needs anyway covers every entry in it, so the entries are grouped by disk
-     * and directory and each directory is listed once - the same cost as fromDiskDirectory().
-     *
-     * Only entries without a size of their own are touched, and only when a size is being asked for.
-     */
-    private function fillMissingSizes(): void
-    {
-        /** @var array<string, array{disk: FilesystemAdapter, directory: string, entries: DiskFile[]}> $lookups */
-        $lookups = [];
-
-        foreach ($this->pending->entries() as $entry) {
-            if (!$entry instanceof DiskFile && !$entry instanceof LocalFile) {
-                continue;
-            }
-
-            if ($entry->getFileOptions()->exactSize !== null) {
-                continue;
-            }
-
-            if ($entry instanceof LocalFile) {
-                // A local stat costs nothing worth grouping for.
-                $size = @filesize($entry->source());
-
-                if ($size !== false) {
-                    $entry->exactSize($size);
-                }
-
-                continue;
-            }
-
-            $directory = dirname($entry->source());
-            $directory = $directory === '.' ? '' : $directory;
-            $key = spl_object_id($entry->disk()) . ':' . $directory;
-
-            $lookups[$key] ??= ['disk' => $entry->disk(), 'directory' => $directory, 'entries' => []];
-            $lookups[$key]['entries'][] = $entry;
-        }
-
-        foreach ($lookups as ['disk' => $disk, 'directory' => $directory, 'entries' => $entries]) {
-            $sizes = [];
-
-            foreach ($disk->getDriver()->listContents($directory, false) as $attributes) {
-                if ($attributes->isFile() && $attributes->fileSize() !== null) {
-                    $sizes[$attributes->path()] = $attributes->fileSize();
-                }
-            }
-
-            foreach ($entries as $entry) {
-                if (isset($sizes[ltrim($entry->source(), '/')])) {
-                    $entry->exactSize($sizes[ltrim($entry->source(), '/')]);
-                }
-            }
-        }
-    }
-
-    /**
-     * Give progress its target, where one can be had.
-     */
-    private function resolveKnownSize(): void
-    {
-        if (!$this->knownSizeResolved) {
-            if ($this->withKnownSize) {
-                $this->fillMissingSizes();
-            }
-
-            $this->knownSize = $this->withKnownSize ? $this->calculateSize() : null;
-            $this->knownSizeResolved = true;
-        }
-
-        $this->events->state()->bytesTotal = $this->knownSize;
-        $this->events->state()->bytesDone = 0;
-    }
-
-    private function finishArchive(ZipStream $zipStream): ?int
-    {
-        $size = $zipStream->finish();
-
-        if ($this->flushProgress !== null) {
-            ($this->flushProgress)();
-        }
-
-        return $size;
     }
 
     public function toResponse($request): SymfonyStreamedResponse
@@ -920,99 +247,6 @@ class Builder implements Responsable, HasZipOptions
         );
     }
 
-    private function resolvedSize(): ?int
-    {
-        if (!$this->knownSizeResolved) {
-            $this->fillMissingSizes();
-
-            $this->knownSize = $this->calculateSize();
-            $this->knownSizeResolved = true;
-        }
-
-        return $this->knownSize;
-    }
-
-    /**
-     * Put PHP's output layer out of the way for the length of a streamed response.
-     *
-     * Every one of these is invisible until the first large download stalls in production, and none of
-     * them is specific to one application.
-     *
-     * @return callable(): void  Puts back what was changed, once the response is done. Under a worker
-     *                           that survives the request - Octane, RoadRunner - the process is reused,
-     *                           so leaving any of it behind would reach the next request.
-     */
-    private function clearTheWay(): callable
-    {
-        // Symfony skips the SAPIs where output is not going to a socket, and so does this: a test
-        // harness or a queue worker has its own reasons for the buffers it opened.
-        if (!$this->managesOutput || in_array(PHP_SAPI, ['cli', 'phpdbg', 'embed'], true)) {
-            return static fn () => null;
-        }
-
-        // Would hold the whole archive in memory to recompute Content-Length.
-        $zlib = ini_set('zlib.output_compression', '0');
-
-        // ZipStream's own ob_flush() only reaches the topmost buffer; anything above it still swallows
-        // the bytes. Flush them all, rather than discard what an application already wrote.
-        SymfonyResponse::closeOutputBuffers(0, true);
-
-        $timeLimit = null;
-
-        if ($this->timeLimit !== null) {
-            $timeLimit = (int) ini_get('max_execution_time');
-
-            set_time_limit($this->timeLimit);
-        }
-
-        return static function () use ($zlib, $timeLimit): void {
-            if ($zlib !== false) {
-                ini_set('zlib.output_compression', $zlib);
-            }
-
-            if ($timeLimit !== null) {
-                set_time_limit($timeLimit);
-            }
-        };
-    }
-
-    /**
-     * Determine the exact archive size without performing any I/O.
-     *
-     * Returns null when a size cannot be known up front - every entry has to use
-     * CompressionMethod::STORE and carry a known exactSize for the simulation to succeed.
-     */
-    private function calculateSize(): ?int
-    {
-        $sink = fopen('php://memory', 'w+b');
-        $simulation = $this->prepareZipStream($sink, OperationMode::SIMULATE_STRICT);
-
-        try {
-            // A fresh queue fires no user handlers, and - since it has no ProcessError
-            // handler - lets a failed simulation bubble out instead of being swallowed.
-            $this->pending->process($simulation, new EventQueue(), $this->getZipOptions());
-
-            return $simulation->finish();
-        } catch (SimulationFileUnknownException|OverflowException) {
-            return null;
-        } finally {
-            fclose($sink);
-        }
-    }
-
-    private function resolveModifierCallback(?callable $modify): Closure
-    {
-        return ($modify ?? static fn ($optionable) => null)(...);
-    }
-
-    /**
-     * Register an event handler.
-     *
-     * What it listens for is its first parameter: a concrete event, one of the interfaces they are
-     * grouped by, or a union of either.
-     *
-     * @param  callable(Event): void  $handler
-     */
     public function on(callable $handler): static
     {
         $this->events->add($handler);

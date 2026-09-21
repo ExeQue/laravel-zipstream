@@ -76,9 +76,6 @@ trait InteractsWithFileOptions
         return $this;
     }
 
-    /**
-     * Neither on nor off: inherit whatever the level above decides.
-     */
     public function inheritZeroHeader(): static
     {
         $this->fileOptions->enableZeroHeader = null;

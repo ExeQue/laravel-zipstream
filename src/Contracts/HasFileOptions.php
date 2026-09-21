@@ -45,7 +45,7 @@ interface HasFileOptions extends HasLastModified, HasComment
     public function withoutZeroHeader(): static;
 
     /**
-     * Neither on nor off: inherit whatever the level above decides.
+     * Drop the override and take whatever the archive decides.
      */
     public function inheritZeroHeader(): static;
 }

@@ -21,8 +21,12 @@ Zip::fromLocal('/path/file.txt', 'file.txt', function (LocalFile $file) {
 ### Skipping Verification
 
 Every entry that can be checked is, as it is added: `fromDisk()` asks the disk whether the file is there, and
-`fromLocal()` stats it. That is one request per entry on a remote disk, and it is what turns a missing file into
-a `FileNotFoundException` at composition time rather than a broken archive later.
+`fromLocal()` stats it. That is one request per entry on a remote disk - a `HEAD` against S3 for every file,
+paid before a byte is streamed - and it is what turns a missing file into a `FileNotFoundException` at
+composition time rather than a broken archive later.
+
+For an archive of hundreds of entries you already trust, that is the difference between hundreds of requests and
+none.
 
 ```php
 Zip::withoutVerification()->fromDisk('s3', 'huge/listing.csv');
@@ -107,8 +111,12 @@ Zip::on(fn (ProcessError $event) => Log::error('Entry failed', $event->context->
 ## Skipping Verification
 
 Every entry that can be checked is, as it is added: `fromDisk()` asks the disk whether the file is there, and
-`fromLocal()` stats it. That is one request per entry on a remote disk, and it is what turns a missing file into
-a `FileNotFoundException` at composition time rather than a broken archive later.
+`fromLocal()` stats it. That is one request per entry on a remote disk - a `HEAD` against S3 for every file,
+paid before a byte is streamed - and it is what turns a missing file into a `FileNotFoundException` at
+composition time rather than a broken archive later.
+
+For an archive of hundreds of entries you already trust, that is the difference between hundreds of requests and
+none.
 
 ```php
 Zip::withoutVerification()->fromDisk('s3', 'huge/listing.csv');

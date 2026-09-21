@@ -175,6 +175,26 @@ describe(Builder::class, function () {
         expect($exists)->toBeTrue();
     });
 
+    it('goes back to the configured zero header, rather than to null', function () {
+        $config = Mockery::mock(Repository::class);
+        $config->shouldReceive('get')->with('laravel-zipstream.enable_zero_header')->andReturnTrue();
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
+
+        $builder = new Builder($this->filesystemManager, $config);
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeTrue();
+
+        $builder->withoutZeroHeader();
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeFalse();
+
+        // Nothing sits above the archive, so this is the config value - not null, which the option
+        // cannot hold and ZipStream would not take.
+        $builder->inheritZeroHeader();
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeTrue();
+    });
+
     it('can set ZIP options fluently', function () {
         $this->builder
             ->compressionMethod(CompressionMethod::STORE)

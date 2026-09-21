@@ -10,9 +10,13 @@ trait InteractsWithZipOptions
 {
     private ZipOptions $zipOptions;
 
+    /** What the config asked for, to go back to when an override is dropped. */
+    private bool $configuredZeroHeader;
+
     private function prepareZipOptions(Repository $config): void
     {
         $this->zipOptions = ZipOptions::default($config);
+        $this->configuredZeroHeader = $this->zipOptions->enableZeroHeader;
     }
 
     public function compressionMethod(CompressionMethod $compressionMethod): static
@@ -53,12 +57,10 @@ trait InteractsWithZipOptions
         return $this;
     }
 
-    /**
-     * Neither on nor off: inherit whatever the level above decides.
-     */
     public function inheritZeroHeader(): static
     {
-        $this->zipOptions->enableZeroHeader = null;
+        // Nothing sits above the archive, so inheriting means going back to the configured default.
+        $this->zipOptions->enableZeroHeader = $this->configuredZeroHeader;
 
         return $this;
     }
