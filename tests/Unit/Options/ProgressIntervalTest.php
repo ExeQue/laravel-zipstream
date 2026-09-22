@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use DateInterval;
 use ExeQue\ZipStream\Exceptions\InvalidProgressIntervalException;
 use ExeQue\ZipStream\Options\ProgressInterval;
 

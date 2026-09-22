@@ -1,10 +1,15 @@
 name: Tests
 
 on:
+  # A branch with an open pull request would otherwise run twice per push.
   push:
-    branches: [ "main", "v1.x" ]
+    branches: [ "main" ]
   pull_request:
     branches: [ "main", "v1.x" ]
+
+# The suite reads no secret and writes nothing back.
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -20,7 +25,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
