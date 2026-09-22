@@ -9,5 +9,14 @@
   },
   "devDependencies": {
     "vitepress": "^1.6.4"
+  },
+  "//overrides": [
+    "VitePress 1.6 pins vite ^5, where the fs.deny bypass and the esbuild dev-server advisories are unpatched.",
+    "Both are dev-server issues and none of this ships - package.json is export-ignored - but the lockfile is",
+    "what Dependabot reads. Drop these once VitePress 2 is stable and depends on vite 6 itself."
+  ],
+  "overrides": {
+    "vite": "^6.4.3",
+    "esbuild": "^0.25.0"
   }
 }
