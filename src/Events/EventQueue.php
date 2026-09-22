@@ -5,24 +5,43 @@ declare(strict_types=1);
 namespace ExeQue\ZipStream\Events;
 
 use Closure;
+use ExeQue\ZipStream\Contracts\ArchiveBuilder;
 use ExeQue\ZipStream\Events\Contracts\Event;
 use ExeQue\ZipStream\Events\Data\Context;
 use ExeQue\ZipStream\Events\Internal\ArchiveState;
 use ExeQue\ZipStream\Exceptions\InvalidEventHandlerException;
+use Illuminate\Contracts\Container\Container;
 use ReflectionFunction;
 use ReflectionNamedType;
+use ReflectionParameter;
 use ReflectionUnionType;
 
 class EventQueue
 {
-    /** @var array<int, array{types: string[], handler: callable}> */
+    private const ARCHIVE = '@archive';
+
+    /** @var array<int, array{types: string[], arguments: array<int, string|array{class: string}|array{default: mixed}>, handler: callable}> */
     private array $handlers = [];
 
     private ArchiveState $state;
 
-    public function __construct()
+    private ?ArchiveBuilder $archive = null;
+
+    public function __construct(private readonly ?Container $container = null)
     {
         $this->state = new ArchiveState(uniqid('zip-', true));
+    }
+
+    /**
+     * The archive these events belong to, handed to any handler that asks for it.
+     *
+     * @internal
+     */
+    public function for(ArchiveBuilder $archive): self
+    {
+        $this->archive = $archive;
+
+        return $this;
     }
 
     /**
@@ -48,9 +67,12 @@ class EventQueue
      */
     public function add(callable $handler): self
     {
+        $parameters = (new ReflectionFunction(Closure::fromCallable($handler)))->getParameters();
+
         $this->handlers[] = [
-            'types'   => $this->listensFor($handler),
-            'handler' => $handler,
+            'types'     => $this->listensFor($parameters),
+            'arguments' => $this->argumentsFor($parameters),
+            'handler'   => $handler,
         ];
 
         return $this;
@@ -84,14 +106,14 @@ class EventQueue
 
         $dispatched = new $event($this->state->snapshot(), ...$args);
 
-        foreach ($handlers as $handler) {
-            $handler($dispatched);
+        foreach ($handlers as ['handler' => $handler, 'arguments' => $plan]) {
+            $handler($dispatched, ...$this->resolve($plan));
         }
     }
 
     /**
      * @param  class-string<Event>  $event
-     * @return array<int, callable>
+     * @return array<int, array{types: string[], arguments: array<int, mixed>, handler: callable}>
      */
     private function handlersFor(string $event): array
     {
@@ -100,7 +122,7 @@ class EventQueue
         foreach ($this->handlers as $registered) {
             foreach ($registered['types'] as $type) {
                 if (is_a($event, $type, true)) {
-                    $handlers[] = $registered['handler'];
+                    $handlers[] = $registered;
 
                     continue 2;
                 }
@@ -113,9 +135,13 @@ class EventQueue
     /**
      * @return string[]
      */
-    private function listensFor(callable $handler): array
+    /**
+     * @param  ReflectionParameter[]  $parameters
+     * @return string[]
+     */
+    private function listensFor(array $parameters): array
     {
-        $parameter = (new ReflectionFunction(Closure::fromCallable($handler)))->getParameters()[0] ?? null;
+        $parameter = $parameters[0] ?? null;
         $type = $parameter?->getType();
 
         $types = match (true) {
@@ -133,5 +159,66 @@ class EventQueue
 
             return $name;
         }, $types);
+    }
+
+    /**
+     * What to hand a handler after the event: the archive, or anything the container can build.
+     *
+     * Worked out once, when the handler is registered, so dispatching is a walk over a plan rather
+     * than reflection per event.
+     *
+     * @param  ReflectionParameter[]  $parameters
+     * @return array<int, string|array{class: string}|array{default: mixed}>
+     */
+    private function argumentsFor(array $parameters): array
+    {
+        $arguments = [];
+
+        foreach (array_slice($parameters, 1) as $parameter) {
+            $type = $parameter->getType();
+            $name = $type instanceof ReflectionNamedType && !$type->isBuiltin() ? $type->getName() : null;
+
+            if ($name !== null && is_a(ArchiveBuilder::class, $name, true)) {
+                $arguments[] = self::ARCHIVE;
+
+                continue;
+            }
+
+            if ($name !== null) {
+                $arguments[] = ['class' => $name];
+
+                continue;
+            }
+
+            if ($parameter->isDefaultValueAvailable()) {
+                $arguments[] = ['default' => $parameter->getDefaultValue()];
+
+                continue;
+            }
+
+            InvalidEventHandlerException::forUnresolvable($parameter->getName());
+        }
+
+        return $arguments;
+    }
+
+    /**
+     * @param  array<int, string|array{class: string}|array{default: mixed}>  $plan
+     * @return array<int, mixed>
+     */
+    private function resolve(array $plan): array
+    {
+        return array_map(function ($argument) {
+            if ($argument === self::ARCHIVE) {
+                return $this->archive ?? InvalidEventHandlerException::forArchiveOutsideBuilder();
+            }
+
+            if (array_key_exists('default', $argument)) {
+                return $argument['default'];
+            }
+
+            return $this->container?->make($argument['class'])
+                ?? InvalidEventHandlerException::forContainerOutsideBuilder($argument['class']);
+        }, $plan);
     }
 }

@@ -38,6 +38,8 @@ class Pending
 
     private bool $frozen = false;
 
+    private bool $streaming = false;
+
     private bool $verify = true;
 
     /**
@@ -60,6 +62,12 @@ class Pending
 
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable, bool $verify = true): static
     {
+        if ($this->streaming) {
+            ArchiveFrozenException::whileStreaming(
+                $streamable instanceof CanStreamToZip ? $streamable::class : $streamable->destination(),
+            );
+        }
+
         if ($this->frozen) {
             ArchiveFrozenException::forContentLength(
                 $streamable instanceof CanStreamToZip ? $streamable::class : $streamable->destination(),
@@ -137,13 +145,30 @@ class Pending
     /** @noinspection PhpInconsistentReturnPointsInspection */
     public function process(
         ZipStream $stream,
-        EventQueue $events = new EventQueue(),
+        EventQueue $events,
         ?ZipOptions $zipOptions = null,
     ): void {
         // A builder is reusable, so a previous abort must not silently empty the next archive.
         $this->aborted = false;
         $this->discard = false;
 
+        // Entries are taken once, here: an entry added by a handler while this runs would never
+        // reach the archive being written, so adding one is refused rather than silently deferred.
+        $this->streaming = true;
+
+        try {
+            $this->stream($stream, $events, $zipOptions);
+        } finally {
+            // An abort unwinds through here, and the builder is reusable afterwards.
+            $this->streaming = false;
+        }
+    }
+
+    private function stream(
+        ZipStream $stream,
+        EventQueue $events,
+        ?ZipOptions $zipOptions,
+    ): void {
         $entries = collect($this->entries);
 
         $state = $events->state();

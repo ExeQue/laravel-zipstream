@@ -18,28 +18,28 @@ covers(EventQueue::class);
 
 describe(EventQueue::class, function () {
     it('has no handler for an event nobody listens for', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(fn (ProcessStarted $event) => null);
 
         expect($events->hasHandlerFor(ProcessError::class))->toBeFalse();
     });
 
     it('matches a handler through the interfaces of an event', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(fn (StreamedToZip $event) => null);
 
         expect($events->hasHandlerFor(StreamedFile::class))->toBeTrue();
     });
 
     it('does not report byte progress to a lifecycle handler', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(fn (LifecycleEvent $event) => null);
 
         expect($events->hasHandlerFor(StreamedBytes::class))->toBeFalse();
     });
 
     it('reports byte progress to a handler on every event', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(fn (Event $event) => null);
 
         expect($events->hasHandlerFor(StreamedBytes::class))->toBeTrue();
@@ -48,7 +48,7 @@ describe(EventQueue::class, function () {
     it('dispatches to each matching handler once', function () {
         $seen = [];
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (StreamedFile $event) use (&$seen) {
             $seen[] = 'concrete';
         });
@@ -68,7 +68,7 @@ describe(EventQueue::class, function () {
     it('calls a handler for every type in its union', function () {
         $seen = [];
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (StreamedFile|ProcessError $event) use (&$seen) {
             $seen[] = $event::class;
         });
@@ -84,7 +84,7 @@ describe(EventQueue::class, function () {
     });
 
     it('does not build an event nobody listens for', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
 
         // Wrong argument count would fatal if the event were constructed.
         $events->dispatch(StreamedBytes::class);
@@ -93,7 +93,7 @@ describe(EventQueue::class, function () {
     });
 
     it('rejects a handler without a type-hinted first parameter', function () {
-        $events = new EventQueue();
+        $events = new EventQueue(app());
 
         expect(fn () => $events->add(fn () => null))->toThrow(InvalidEventHandlerException::class)
             ->and(fn () => $events->add(fn (string $nope) => null))->toThrow(InvalidEventHandlerException::class);

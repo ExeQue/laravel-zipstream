@@ -117,7 +117,7 @@ describe(Pending::class, function () {
             null,
         );
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
     });
 
     it('processes file entries', function () {
@@ -140,7 +140,7 @@ describe(Pending::class, function () {
             null,
         );
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
     });
 
     it('processes file entries with options', function () {
@@ -173,7 +173,7 @@ describe(Pending::class, function () {
             true,
         );
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
     });
 
     it('forwards size limits for stored entries', function () {
@@ -201,7 +201,7 @@ describe(Pending::class, function () {
             null,
         );
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
     });
 
     it('drops size limits for deflated entries', function () {
@@ -229,7 +229,7 @@ describe(Pending::class, function () {
             null,
         );
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
     });
 
     it('falls back to the archive compression method when deciding on size limits', function () {
@@ -256,7 +256,7 @@ describe(Pending::class, function () {
         $zipOptions = Mockery::mock(ZipOptions::class);
         $zipOptions->compressionMethod = CompressionMethod::STORE;
 
-        $pending->process($stream, new EventQueue(), $zipOptions);
+        $pending->process($stream, new EventQueue(app()), $zipOptions);
     });
 
     it('routes a short read to ProcessError when exactSize is declared', function () {
@@ -268,7 +268,7 @@ describe(Pending::class, function () {
         $zipOptions->compressionMethod = CompressionMethod::STORE;
 
         $errors = [];
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (ProcessError $event) use (&$errors) {
             $errors[] = $event->exception;
         });
@@ -298,7 +298,7 @@ describe(Pending::class, function () {
         $pending->process(new ZipStream(
             outputStream: fopen('php://memory', 'w+b'),
             sendHttpHeaders: false,
-        ));
+        ), new EventQueue(app()));
 
         expect(is_resource($handle))->toBeFalse();
     });
@@ -315,7 +315,7 @@ describe(Pending::class, function () {
         $pending = new Pending();
         $pending->add($file);
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(fn (ProcessError $event) => null);
 
         $stream = Mockery::mock(ZipStream::class);
@@ -340,7 +340,7 @@ describe(Pending::class, function () {
         $pending->process(new ZipStream(
             outputStream: fopen('php://memory', 'w+b'),
             sendHttpHeaders: false,
-        ));
+        ), new EventQueue(app()));
 
         expect(is_resource($handle))->toBeTrue();
 
@@ -378,7 +378,7 @@ describe(Pending::class, function () {
             fn ($fileName, $callback) => $callback(),
         );
 
-        expect(fn () => $pending->process($stream))->toThrow(RuntimeException::class, 'boom');
+        expect(fn () => $pending->process($stream, new EventQueue(app())))->toThrow(RuntimeException::class, 'boom');
     });
 
     it('does not route an exception from an event handler to ProcessError', function () {
@@ -396,7 +396,7 @@ describe(Pending::class, function () {
 
         $reported = [];
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (ProcessError $event) use (&$reported) {
             $reported[] = $event->exception;
         });
@@ -427,7 +427,7 @@ describe(Pending::class, function () {
             fn ($fileName, $callback) => $callback(),
         );
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $caught = null;
         $events->add(function (ProcessError $event) use (&$caught) {
             $caught = $event->exception;
@@ -451,7 +451,7 @@ describe(Pending::class, function () {
             fn ($fileName, $callback) => $callback(),
         );
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (ProcessError $event) {
             throw $event->exception;
         });
@@ -478,7 +478,7 @@ describe(Pending::class, function () {
         $stream->shouldReceive('addDirectory')->never();
         $stream->shouldReceive('addFileFromCallback')->never();
 
-        $pending->process($stream);
+        $pending->process($stream, new EventQueue(app()));
 
         unset($GLOBALS['__zipstream_connection_aborted_override']);
     });

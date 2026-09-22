@@ -19,6 +19,47 @@ Zip::as('archive.zip')
     ->toResponse();
 ```
 
+### What a handler is handed
+
+The event comes first. After it, a handler may ask for the archive it belongs to, or for anything the container
+can build:
+
+```php
+use ExeQue\ZipStream\Contracts\ArchiveBuilder;
+
+$zip->on(function (ProcessError $event, ArchiveBuilder $archive, LoggerInterface $log) {
+    $log->warning('Entry failed', $event->context->entryData());
+
+    $archive->abort();
+});
+```
+
+That saves closing over the builder to reach `abort()`, and saves a handler reaching into the container itself.
+Parameters are resolved by type: `ArchiveBuilder` is the archive, a class the container knows is built, and
+anything else needs a default or the handler is refused when it is registered. That includes the container
+itself, for a handler that would rather resolve things on its own terms:
+
+```php
+$zip->on(fn (StreamedBytes $event, Container $app) => $app->make(ProgressStore::class)->put($event->context));
+```
+
+The plan is worked out once, when the handler is registered; the values are resolved per dispatch, so a scoped
+binding is honoured - worth remembering on `StreamedBytes`, which fires as often as the throttle allows.
+
+The queue itself comes from the container, so an application can bind its own:
+
+```php
+// A queue that logs everything an archive reports, without touching a handler
+$this->app->bind(EventQueue::class, fn ($app) => new LoggingEventQueue($app));
+```
+
+A queue built by hand rather than resolved has no container: a handler asking it for the archive or for a
+dependency throws `InvalidEventHandlerException` when the event fires, naming what it could not supply.
+
+**The archive cannot be restructured from a handler.** The entries are taken when a run starts, so one added
+while it is writing would never reach the archive being produced - `add()` and everything built on it throw
+`ArchiveFrozenException` until the run is over. Reading, `abort()` and `withContext()` all work.
+
 A union listens for several at once:
 
 ```php

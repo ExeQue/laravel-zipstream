@@ -73,7 +73,8 @@ around.
 
 **Progress and events**
 
-- `on(callable $handler)` - register a handler, see [Events](events.md)
+- `on(callable $handler)` - register a handler. The event is its first parameter; after it, the archive or
+  anything the container builds. See [Events](events.md#what-a-handler-is-handed)
 - `manageOutput(bool $enabled = true)` / `doesntManageOutput()` - whether a response clears PHP's output layer first
 - `timeLimit(?int $seconds)` - the time limit a streamed response runs under. `0` for none, `null` to leave PHP's alone
 - `progressEveryBytes(int $bytes)` - report progress every so many bytes. `0` reports every write
