@@ -101,6 +101,11 @@ interface ArchiveBuilder extends HasZipOptions, Responsable
      * Meant to be called from an event handler. Remaining entries are skipped, ProcessAborted fires and
      * the archive is finished, so what has been written stays a valid - if incomplete - zip.
      *
+     * That last part is about the bytes, not about what a browser ends up with: a response measured
+     * with withContentLength() has already promised a length it will now not deliver, so the client
+     * sees a transfer that died rather than a short archive. That is usually the honest outcome, and
+     * it is why an application that wants a readable partial download should leave the length off.
+     *
      * With $discard the archive is thrown away instead: an S3 multipart upload is aborted, a file this
      * call created is removed, and saveToDisk() and saveToLocal() return null.
      */
@@ -195,7 +200,13 @@ interface ArchiveBuilder extends HasZipOptions, Responsable
     /**
      * The time limit to give a streamed response, in seconds.
      *
-     * Zero, the default, means no limit. Null leaves PHP's own setting alone.
+     * Zero, the default, means no limit: a page-sized max_execution_time is the wrong shape for an
+     * archive that is compressed as it is sent, and would kill a large one part way. On Unix that
+     * limit counts CPU time rather than time spent waiting on the client, and php-fpm's
+     * request_terminate_timeout is unaffected by any of this - that is the one that reclaims a worker
+     * held by a reader who has stopped reading.
+     *
+     * Null leaves PHP's own setting alone.
      */
     public function timeLimit(?int $seconds): static;
 

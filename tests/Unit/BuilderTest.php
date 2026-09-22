@@ -15,6 +15,7 @@ use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
 use ExeQue\ZipStream\Events\ProcessAborted;
 use ExeQue\ZipStream\Events\StreamedBytes;
 use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Exceptions\ArchiveFrozenException;
 use ExeQue\ZipStream\Exceptions\FileUnavailableException;
 use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use Illuminate\Contracts\Config\Repository;
@@ -810,6 +811,36 @@ describe(Builder::class, function () {
         $this->builder->withVerification();
 
         expect($pending->verify)->toBeTrue();
+    });
+
+    it('refuses an entry added after a Content-Length was promised', function () {
+        $this->builder->store()->withContentLength()->fromRaw('a.txt', str_repeat('a', 1024));
+
+        $declared = (int) $this->builder->toResponse(new Request())->headers->get('Content-Length');
+
+        expect($declared)->toBeGreaterThan(1024)
+            // The body is written when the response is sent, so the entries cannot move in between.
+            ->and(fn () => $this->builder->fromRaw('b.txt', str_repeat('b', 4096)))
+            ->toThrow(ArchiveFrozenException::class, 'b.txt');
+
+        $body = captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent());
+
+        expect(strlen($body))->toBe($declared);
+    });
+
+    it('stays open when no length was promised', function () {
+        $this->builder->fromRaw('a.txt', 'content');
+
+        $response = $this->builder->toResponse(new Request());
+
+        expect($response->headers->has('Content-Length'))->toBeFalse();
+
+        // Nothing was promised, so a later entry only makes the archive bigger.
+        $this->builder->fromRaw('b.txt', 'more content');
+
+        $body = captureStreamedOutput(fn () => $response->sendContent());
+
+        expect($body)->toContain('b.txt');
     });
 
     it('can return a response', function () {

@@ -11,7 +11,9 @@ use PHPUnit\Framework\Assert;
 /**
  * What the archives built during a test contained, and where they were sent.
  *
- * Records rather than writes, so a test about which entries an archive gets needs no storage at all.
+ * It skips the bytes, not the checks: an entry still verifies itself as it is added, so a test whose
+ * files are not on the disk fails the way the real builder would. Storage is only out of the picture
+ * for the writing - reach for Storage::fake(), or withoutVerification(), for the rest.
  */
 class ZipFake
 {

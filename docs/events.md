@@ -87,6 +87,12 @@ $zip->on(function (ProcessError $event) use ($zip) {
 
 `stopOnConnectionAborted()` does the same thing when the client hangs up.
 
+**On a response that promised a `Content-Length`, aborting reads as a failed transfer.** The header went out
+before the body did, and a length cannot be recalled any more than the bytes can - so the browser reports a
+broken download rather than handing over a short archive. That is usually the honest outcome, and it is why an
+application that wants the partial download to be openable should leave `withContentLength()` off and stream
+chunked.
+
 **`abort(discard: true)`** throws the archive away instead of finishing it - for a cancelled download, where a
 half archive left in a bucket is billed for and could still be handed out:
 

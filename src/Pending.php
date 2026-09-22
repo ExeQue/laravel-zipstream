@@ -18,6 +18,7 @@ use ExeQue\ZipStream\Events\StreamedFile;
 use ExeQue\ZipStream\Events\StreamingDirectory;
 use ExeQue\ZipStream\Events\StreamingFile;
 use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
+use ExeQue\ZipStream\Exceptions\ArchiveFrozenException;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use Psr\Http\Message\StreamInterface;
@@ -35,13 +36,36 @@ class Pending
 
     private bool $discard = false;
 
+    private bool $frozen = false;
+
     private bool $verify = true;
 
     /**
      * @param  bool  $verify  Pass false for an entry already known to exist, such as one out of a listing.
      */
+    /**
+     * Refuse further entries: the archive has been measured, and its size is already promised.
+     */
+    public function freeze(): static
+    {
+        $this->frozen = true;
+
+        return $this;
+    }
+
+    public function isFrozen(): bool
+    {
+        return $this->frozen;
+    }
+
     public function add(StreamableToZip|CanStreamToZip|Directory $streamable, bool $verify = true): static
     {
+        if ($this->frozen) {
+            ArchiveFrozenException::forContentLength(
+                $streamable instanceof CanStreamToZip ? $streamable::class : $streamable->destination(),
+            );
+        }
+
         if ($verify && $this->verify && $streamable instanceof Verifiable) {
             $streamable->verify();
         }

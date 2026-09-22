@@ -217,6 +217,10 @@ class Builder implements ArchiveBuilder
 
         if ($this->withContentLength && ($size = $this->resolvedSize()) !== null) {
             $headers['Content-Length'] = $size;
+
+            // The body is written when the response is sent, which is later than this. An entry added
+            // in between would make the header a lie, and a lie about a length truncates a download.
+            $this->pending->freeze();
         }
 
         return new SymfonyStreamedResponse(

@@ -17,6 +17,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * A builder that records what it was asked to archive instead of producing bytes.
+ *
+ * Everything up to the writing behaves as it would: entries verify themselves, options apply, events
+ * fire. Only the output methods are replaced.
  */
 class FakeBuilder extends Builder
 {

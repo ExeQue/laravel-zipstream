@@ -48,6 +48,17 @@ are stat'd, and disk entries are grouped by directory and each directory listed 
 [`fromDiskDirectory()`](content.md#from-a-whole-prefix-or-directory), rather than a request per entry. An entry
 that sets its own `exactSize` is left alone.
 
+A length is a promise about the body, so anything that cuts the body short breaks it: `abort()` from a handler
+leaves the response short of what the header declared, and a browser treats that as a failed transfer rather
+than as a short archive. Leave the header off when a partial download should still be openable - see
+[Stopping early](events.md#stopping-early).
+
+Once a length has been sent, the archive is closed to further entries: `add()` and everything built on it throw
+`ArchiveFrozenException`. The header is worked out when the response is made and the body is written when it is
+sent, so an entry slipped in between would make the two disagree - and a download that claims a length it does
+not deliver is the failure `withContentLength()` exists to prevent. Add everything first, or leave the header
+off and stream chunked.
+
 `withKnownSize()` runs the same simulation without sending a header. It is what fills in
 `Context::$bytes->total`, so a progress percentage works on any destination - `withContentLength()` turns it on
 by itself.
@@ -74,6 +85,12 @@ Zip::timeLimit(null)         // leave PHP's setting alone
 
 Both the compression setting and the time limit are put back once the response is done, since a worker that
 survives the request would otherwise carry them into the next one.
+
+**A managed response runs without a time limit.** That is deliberate: `max_execution_time` is sized for a page,
+and an archive compressed as it is sent would be killed part way through. On Unix that limit counts CPU time
+rather than time spent waiting for the client, so it was never the thing holding a slow reader in check -
+php-fpm's `request_terminate_timeout` is, and nothing here touches it. Set your own with `timeLimit(600)`, or
+leave PHP's alone with `timeLimit(null)`.
 
 `manage_output` in the config sets the default for the application.
 

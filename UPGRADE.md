@@ -111,6 +111,10 @@ $size = $buffered->getSize();
 
 You can also save the archive with `saveToLocal()` and open the file.
 
+**A promised `Content-Length` closes the archive.** `toResponse()` measures the entries to send the header, and
+refuses entries added afterwards with `ArchiveFrozenException` - the body is written later, and the two would
+otherwise disagree. Without `withContentLength()` nothing is promised and nothing is frozen.
+
 **Changes to the builder after `toStream()` are included.** Because the archive is built later, any file added
 to the builder after `toStream()` but before the stream is read ends up in the archive. Configure the builder
 completely before you call `toStream()`.
@@ -391,8 +395,12 @@ under here". On S3 it replaces a request per file.
 `Content-Encoding: identity`, so a large download streams rather than stalls behind something holding the bytes.
 It also drops the execution time limit for the length of the response, and puts it back afterwards.
 
-None of it happens under the CLI SAPI. `doesntManageOutput()`, or `manage_output` in the config, turns it off for
-an application that manages its own buffering, and `timeLimit()` sets a limit of your own.
+**It is on by default**, so a response that already worked gets all of it without asking - including running
+without an execution time limit for the length of the response. That is what most applications want, and it is
+two things doing the same job for one that already handles its own output: turn it off with
+`doesntManageOutput()`, or `manage_output` in the config, and set a limit of your own with `timeLimit()`.
+
+None of it happens under the CLI SAPI, so a test harness capturing a streamed response is untouched.
 
 If you carried any of this yourself - a `closeOutputBuffers()` call, an `ini_set()`, a `set_time_limit()` around
 the download - it can go.
