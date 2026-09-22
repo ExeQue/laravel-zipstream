@@ -10,7 +10,7 @@ use ExeQue\ZipStream\Events\Contracts\Event;
 use ExeQue\ZipStream\Events\Data\Context;
 use ExeQue\ZipStream\Events\Internal\ArchiveState;
 use ExeQue\ZipStream\Exceptions\InvalidEventHandlerException;
-use Illuminate\Container\Container;
+use Illuminate\Contracts\Container\Container;
 use ReflectionFunction;
 use ReflectionNamedType;
 use ReflectionParameter;
@@ -27,7 +27,7 @@ class EventQueue
 
     private ?ArchiveBuilder $archive = null;
 
-    public function __construct()
+    public function __construct(private readonly ?Container $container = null)
     {
         $this->state = new ArchiveState(uniqid('zip-', true));
     }
@@ -213,9 +213,12 @@ class EventQueue
                 return $this->archive ?? InvalidEventHandlerException::forArchiveOutsideBuilder();
             }
 
-            return array_key_exists('default', $argument)
-                ? $argument['default']
-                : Container::getInstance()->make($argument['class']);
+            if (array_key_exists('default', $argument)) {
+                return $argument['default'];
+            }
+
+            return $this->container?->make($argument['class'])
+                ?? InvalidEventHandlerException::forContainerOutsideBuilder($argument['class']);
         }, $plan);
     }
 }

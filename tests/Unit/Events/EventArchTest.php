@@ -126,7 +126,7 @@ describe('event types', function () {
 
         $received = null;
 
-        $events = new EventQueue();
+        $events = new EventQueue(app());
         $events->add(function (Event $dispatched) use (&$received) {
             $received = $dispatched;
         });

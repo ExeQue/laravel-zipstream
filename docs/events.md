@@ -43,8 +43,18 @@ itself, for a handler that would rather resolve things on its own terms:
 $zip->on(fn (StreamedBytes $event, Container $app) => $app->make(ProgressStore::class)->put($event->context));
 ```
 
-Resolution happens per dispatch, so a scoped binding is honoured - worth remembering on `StreamedBytes`, which
-fires as often as the throttle allows.
+The plan is worked out once, when the handler is registered; the values are resolved per dispatch, so a scoped
+binding is honoured - worth remembering on `StreamedBytes`, which fires as often as the throttle allows.
+
+The queue itself comes from the container, so an application can bind its own:
+
+```php
+// A queue that logs everything an archive reports, without touching a handler
+$this->app->bind(EventQueue::class, fn ($app) => new LoggingEventQueue($app));
+```
+
+A queue built by hand rather than resolved has no container: a handler asking it for the archive or for a
+dependency throws `InvalidEventHandlerException` when the event fires, naming what it could not supply.
 
 **The archive cannot be restructured from a handler.** The entries are taken when a run starts, so one added
 while it is writing would never reach the archive being produced - `add()` and everything built on it throw

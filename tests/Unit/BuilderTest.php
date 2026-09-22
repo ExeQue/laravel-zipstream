@@ -36,10 +36,7 @@ beforeEach(function () {
     $this->filesystemManager = Mockery::mock(Factory::class);
     $this->config = Mockery::mock(Repository::class);
     $this->config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
-    $this->builder = new Builder(
-        $this->filesystemManager,
-        $this->config,
-    );
+    $this->builder = new Builder($this->filesystemManager, $this->config, app());
 });
 
 describe(Builder::class, function () {
@@ -108,13 +105,13 @@ describe(Builder::class, function () {
             ->and($entries->every(fn ($entry) => $entry->getFileOptions()->exactSize > 0))->toBeTrue();
 
         // Not recursive: only the top level.
-        $shallow = new Builder($this->filesystemManager, $this->config);
+        $shallow = new Builder($this->filesystemManager, $this->config, app());
         $shallow->fromLocalDirectory($root, recursive: false);
 
         expect(Invader::make($shallow)->pending->entries())->toHaveCount(1);
 
         // An empty destination puts the files at the root of the archive.
-        $root_level = new Builder($this->filesystemManager, $this->config);
+        $root_level = new Builder($this->filesystemManager, $this->config, app());
         $root_level->fromLocalDirectory($root, '');
 
         expect(collect(Invader::make($root_level)->pending->entries())->map(fn ($entry) => $entry->destination())->sort()->values()->all())
@@ -181,7 +178,7 @@ describe(Builder::class, function () {
         $config->shouldReceive('get')->with('laravel-zipstream.enable_zero_header')->andReturnTrue();
         $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
-        $builder = new Builder($this->filesystemManager, $config);
+        $builder = new Builder($this->filesystemManager, $config, app());
 
         expect($builder->getZipOptions()->enableZeroHeader)->toBeTrue();
 
@@ -738,7 +735,7 @@ describe(Builder::class, function () {
         $config->shouldReceive('get')->with('laravel-zipstream.manage_output')->andReturnFalse();
         $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
-        $builder = (new Builder($this->filesystemManager, $config))->fromRaw('test.txt', 'content');
+        $builder = (new Builder($this->filesystemManager, $config, app()))->fromRaw('test.txt', 'content');
 
         expect($builder->toResponse(null)->headers->has('Content-Encoding'))->toBeFalse();
     });

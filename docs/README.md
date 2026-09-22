@@ -34,6 +34,7 @@ Also in this repository:
 | `withContentLength()`, `withKnownSize()` | [Output](output.md) |
 | `manageOutput()`, `timeLimit()` | [Output](output.md#what-the-response-does-to-php) |
 | `on()`, the event list | [Events](events.md) |
+| What a handler is handed, and binding the queue | [Events](events.md#what-a-handler-is-handed) |
 | `Context`, `StreamedBytes` | [Progress](progress.md) |
 | `progressEveryBytes()`, `progressEveryInterval()` | [Progress](progress.md#progress) |
 | `abort()`, `abort(discard: true)` | [Events](events.md#stopping-early) |

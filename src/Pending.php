@@ -145,7 +145,7 @@ class Pending
     /** @noinspection PhpInconsistentReturnPointsInspection */
     public function process(
         ZipStream $stream,
-        EventQueue $events = new EventQueue(),
+        EventQueue $events,
         ?ZipOptions $zipOptions = null,
     ): void {
         // A builder is reusable, so a previous abort must not silently empty the next archive.

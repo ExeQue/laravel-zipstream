@@ -52,6 +52,7 @@ class Zip extends Facade
             $app->make(Factory::class),
             $app->make(Repository::class),
             $fake,
+            $app,
         ));
 
         return $fake;

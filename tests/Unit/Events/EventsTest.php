@@ -45,7 +45,7 @@ function builderWithSpy(EventQueueSpy $spy): Builder
     $config = Mockery::mock(Repository::class);
     $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
 
-    return (new Builder(Mockery::mock(Factory::class), $config, $spy))
+    return (new Builder(Mockery::mock(Factory::class), $config, app(), $spy))
         ->emptyDirectory('dir1')
         ->fromRaw('hello.txt', 'Hello World!');
 }
@@ -210,7 +210,7 @@ describe('Event chains', function () use ($entryChain) {
 
         $spy = new EventQueueSpy();
 
-        (new Builder($filesystem, $config, $spy))
+        (new Builder($filesystem, $config, app(), $spy))
             ->fromRaw('hello.txt', 'Hello World!')
             ->saveToDisk('archives', 'archive.zip');
 

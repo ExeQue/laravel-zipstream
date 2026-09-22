@@ -14,6 +14,7 @@ use ExeQue\ZipStream\Facades\Zip;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Filesystem\Factory;
+use Tests\Support\Invader;
 
 covers(EventQueue::class);
 
@@ -89,14 +90,22 @@ it('uses a default for anything it cannot type', function () {
 });
 
 it('refuses a parameter it can neither build nor default', function () {
-    $events = new EventQueue();
+    $events = new EventQueue(app());
 
     expect(fn () => $events->add(fn (ProcessStarted $event, string $label) => null))
         ->toThrow(InvalidEventHandlerException::class, 'no type the container can build');
 });
 
-it('refuses the archive when the events belong to no builder', function () {
+it('refuses to resolve when the queue was given no container', function () {
     $events = new EventQueue();
+    $events->add(fn (ProcessStarted $event, Repository $config) => null);
+
+    expect(fn () => $events->dispatch(ProcessStarted::class))
+        ->toThrow(InvalidEventHandlerException::class, 'no container to resolve it from');
+});
+
+it('refuses the archive when the events belong to no builder', function () {
+    $events = new EventQueue(app());
     $events->add(fn (ProcessStarted $event, ArchiveBuilder $archive) => null);
 
     expect(fn () => $events->dispatch(ProcessStarted::class))
@@ -148,4 +157,27 @@ it('reopens the builder once the run is over', function () {
     $zip->fromRaw('b.txt', 'more');
 
     expect($zip->toString())->toContain('b.txt');
+});
+
+it('takes the queue the application binds', function () {
+    app()->bind(EventQueue::class, fn ($app) => new class ($app) extends EventQueue {
+        public array $dispatched = [];
+
+        public function dispatch(string $event, mixed ...$args): void
+        {
+            $this->dispatched[] = $event;
+
+            parent::dispatch($event, ...$args);
+        }
+    });
+
+    $zip = Zip::as('archive.zip')->fromRaw('a.txt', 'content');
+
+    $zip->saveToLocal($this->createTestFile());
+
+    $queue = Invader::make($zip)->events;
+
+    expect($queue->dispatched)->toContain(ProcessStarted::class);
+
+    app()->forgetInstance(EventQueue::class);
 });

@@ -8,6 +8,7 @@ use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Events\EventQueue;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Filesystem\Factory;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
@@ -27,9 +28,10 @@ class FakeBuilder extends Builder
         Factory $filesystemManager,
         Repository $config,
         private readonly ZipFake $fake,
-        EventQueue $events = new EventQueue(),
+        Container $container,
+        ?EventQueue $events = null,
     ) {
-        parent::__construct($filesystemManager, $config, $events);
+        parent::__construct($filesystemManager, $config, $container, $events);
 
         $this->fake->record($this);
     }

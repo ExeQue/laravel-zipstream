@@ -21,6 +21,7 @@ use ExeQue\ZipStream\Options\ProgressInterval;
 use GuzzleHttp\Psr7\Stream;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Filesystem\Factory;
 use Illuminate\Support\Facades\File as Filesystem;
 use Illuminate\Support\Str;
@@ -44,13 +45,18 @@ class Builder implements ArchiveBuilder
 
     private string $filename;
 
+    private EventQueue $events;
+
     private Pending $pending;
 
     public function __construct(
         private Factory $filesystemManager,
         Repository $config,
-        private EventQueue $events = new EventQueue(),
+        private Container $container,
+        ?EventQueue $events = null,
     ) {
+        // Resolved rather than constructed, so an application can bind its own queue.
+        $this->events = $events ?? $this->container->make(EventQueue::class);
         $this->pending = new Pending();
 
         // A handler may ask for the archive it belongs to, after the event.

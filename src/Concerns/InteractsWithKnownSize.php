@@ -161,7 +161,7 @@ trait InteractsWithKnownSize
         try {
             // A fresh queue fires no user handlers, and - since it has no ProcessError
             // handler - lets a failed simulation bubble out instead of being swallowed.
-            $this->pending->process($simulation, new EventQueue(), $this->getZipOptions());
+            $this->pending->process($simulation, $this->container->make(EventQueue::class), $this->getZipOptions());
 
             return $simulation->finish();
         } catch (SimulationFileUnknownException|OverflowException) {

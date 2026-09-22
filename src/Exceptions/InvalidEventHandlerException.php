@@ -28,6 +28,14 @@ class InvalidEventHandlerException extends InvalidArgumentException implements Z
         );
     }
 
+    public static function forContainerOutsideBuilder(string $class): never
+    {
+        throw new static(
+            "This handler asked for [$class], but the events it listens to were dispatched by a queue with "
+            . 'no container to resolve it from. Only a queue built by the application has one.',
+        );
+    }
+
     public static function forArchiveOutsideBuilder(): never
     {
         throw new static(
