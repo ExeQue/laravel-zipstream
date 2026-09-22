@@ -53,6 +53,9 @@ class Builder implements ArchiveBuilder
     ) {
         $this->pending = new Pending();
 
+        // A handler may ask for the archive it belongs to, after the event.
+        $this->events->for($this);
+
         $this->progressEvery = ProgressInterval::fromConfig($config->get('laravel-zipstream.progress_every'));
         $this->managesOutput = (bool) ($config->get('laravel-zipstream.manage_output') ?? true);
 

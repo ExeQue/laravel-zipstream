@@ -183,6 +183,15 @@ Zip::as('archive.zip')
 Every event carries a `$context`. A union listens for several at once. A handler with no type-hinted first
 parameter throws `InvalidEventHandlerException` when registered.
 
+After the event, a handler may ask for the archive or for anything the container builds:
+
+```php
+$zip->on(fn (ProcessError $e, ArchiveBuilder $archive, LoggerInterface $log) => $archive->abort());
+```
+
+Entries cannot be added from a handler while the archive is being written - they were taken when the run
+started, so it throws rather than silently missing the archive.
+
 ### Context
 `$event->context` describes the archive the event belongs to:
 

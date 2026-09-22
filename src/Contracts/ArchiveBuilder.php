@@ -89,9 +89,10 @@ interface ArchiveBuilder extends HasZipOptions, Responsable
      * Register an event handler.
      *
      * What it listens for is its first parameter: a concrete event, one of the interfaces they are
-     * grouped by, or a union of either.
+     * grouped by, or a union of either. After that it may ask for the archive itself, or for anything
+     * the container can build - each resolved by type, per dispatch.
      *
-     * @param  callable(Event): void  $handler
+     * @param  callable(Event, ArchiveBuilder=, mixed...): void  $handler
      */
     public function on(callable $handler): static;
 
