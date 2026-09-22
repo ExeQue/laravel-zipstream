@@ -503,3 +503,57 @@ requests made before a byte is read, and a 500 file archive drops from 1000 to 5
 `saveToDisk()` keeps the first 6 MB of the archive in memory. The AWS SDK reads up to 5 MB to work out how to
 upload a body of unknown size and then rewinds it, and those 6 MB let that single rewind work. Beyond that, memory
 use doesn't grow with the size of the archive.
+
+## Upgrading from 1.0 to 1.1
+
+```bash
+composer require exeque/laravel-zipstream:^1.1
+```
+
+Nothing to do for normal use. Handlers, entries, destinations and options all behave as they did, and the one
+new behaviour only fires where the old code would have gone wrong quietly.
+
+### Two constructors take one more argument
+
+**Impact: none, unless you build the pieces by hand**
+
+A handler can now ask for the archive it belongs to, or for anything the container can build, which means the
+event queue needs a container and the builder needs to hand it one:
+
+| Was | Is |
+|---|---|
+| `new Builder($filesystems, $config, $events)` | `new Builder($filesystems, $config, $container, $events)` |
+| `$pending->process($stream)` | `$pending->process($stream, $events)` |
+
+`Builder` takes the container as its third argument, and the event queue it used to default is now resolved from
+that container - so an application can bind its own. `Pending::process()` requires the queue it used to invent.
+
+Resolving the builder from the container, or reaching it through the `Zip` facade, needs no change at all.
+
+### An entry cannot be added while the archive is being written
+
+**Impact: low**
+
+The entries are taken when a run starts, so one added from a handler while the archive is streaming would never
+reach the archive being produced - it sat in the builder and turned up in whatever it was used for next. That
+now throws `ArchiveFrozenException` for the length of the run, and the builder reopens afterwards, including
+after an abort.
+
+Reading the builder, `abort()` and `withContext()` are unaffected.
+
+### New: what a handler is handed
+
+The event comes first, as before. After it, a handler may ask for the archive, or for anything the container
+resolves:
+
+```php
+$zip->on(fn (ProcessError $event, ArchiveBuilder $zip, LoggerInterface $log) => $zip->abort());
+$zip->on(fn (StreamedBytes $event, Container $app) => $app->make(ProgressStore::class)->put($event->context));
+```
+
+Existing handlers keep working untouched: PHP passes extra arguments to a closure or a method without
+complaint. A parameter the container cannot build and that has no default is refused when the handler is
+registered, rather than when it fires.
+
+See [What a handler is handed](docs/events.md#what-a-handler-is-handed).
+
