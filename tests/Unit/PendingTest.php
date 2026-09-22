@@ -9,7 +9,8 @@ use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessError;
+use ExeQue\ZipStream\Events\StreamedFile;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use ExeQue\ZipStream\Pending;
@@ -268,8 +269,8 @@ describe(Pending::class, function () {
 
         $errors = [];
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, function (Throwable $e) use (&$errors) {
-            $errors[] = $e;
+        $events->add(function (ProcessError $event) use (&$errors) {
+            $errors[] = $event->exception;
         });
 
         $stream = new ZipStream(
@@ -315,7 +316,7 @@ describe(Pending::class, function () {
         $pending->add($file);
 
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, fn () => null);
+        $events->add(fn (ProcessError $event) => null);
 
         $stream = Mockery::mock(ZipStream::class);
         $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(function (...$args) {
@@ -380,6 +381,34 @@ describe(Pending::class, function () {
         expect(fn () => $pending->process($stream))->toThrow(RuntimeException::class, 'boom');
     });
 
+    it('does not route an exception from an event handler to ProcessError', function () {
+        $pending = new Pending();
+
+        $file = Mockery::mock(StreamableToZip::class);
+        $file->shouldReceive('destination')->andReturn('file.txt');
+        $file->shouldReceive('stream')->andReturn('content');
+        $pending->add($file);
+
+        $stream = Mockery::mock(ZipStream::class);
+        $stream->shouldReceive('addFileFromCallback')->once()->andReturnUsing(
+            fn ($fileName, $callback) => $callback(),
+        );
+
+        $reported = [];
+
+        $events = new EventQueue();
+        $events->add(function (ProcessError $event) use (&$reported) {
+            $reported[] = $event->exception;
+        });
+        $events->add(function (StreamedFile $event) {
+            // Cancelling from a handler has to reach the caller, not be swallowed as a streaming error.
+            throw new RuntimeException('cancelled');
+        });
+
+        expect(fn () => $pending->process($stream, $events))->toThrow(RuntimeException::class, 'cancelled')
+            ->and($reported)->toBeEmpty();
+    });
+
     it('dispatches ProcessError to a registered handler and continues when it does not throw', function () {
         $pending = new Pending();
 
@@ -400,8 +429,8 @@ describe(Pending::class, function () {
 
         $events = new EventQueue();
         $caught = null;
-        $events->add(EventType::ProcessError, function (Throwable $e) use (&$caught) {
-            $caught = $e;
+        $events->add(function (ProcessError $event) use (&$caught) {
+            $caught = $event->exception;
         });
 
         $pending->process($stream, $events);
@@ -423,8 +452,8 @@ describe(Pending::class, function () {
         );
 
         $events = new EventQueue();
-        $events->add(EventType::ProcessError, function (Throwable $e) {
-            throw $e;
+        $events->add(function (ProcessError $event) {
+            throw $event->exception;
         });
 
         expect(fn () => $pending->process($stream, $events))->toThrow(RuntimeException::class, 'boom');

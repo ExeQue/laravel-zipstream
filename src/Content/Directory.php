@@ -4,13 +4,16 @@ namespace ExeQue\ZipStream\Content;
 
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
+use ExeQue\ZipStream\Concerns\InteractsWithContext;
 use ExeQue\ZipStream\Concerns\InteractsWithDestination;
 use ExeQue\ZipStream\Contracts\HasComment;
+use ExeQue\ZipStream\Contracts\HasContext;
 use ExeQue\ZipStream\Contracts\HasLastModified;
 use ExeQue\ZipStream\Options\FileOptions;
 
-class Directory implements HasLastModified, HasComment
+class Directory implements HasContext, HasLastModified, HasComment
 {
+    use InteractsWithContext;
     use InteractsWithDestination;
 
     private FileOptions $fileOptions;

@@ -2,22 +2,25 @@
 
 namespace ExeQue\ZipStream\Content;
 
+use ExeQue\ZipStream\Concerns\InteractsWithContext;
 use ExeQue\ZipStream\Concerns\InteractsWithDestination;
 use ExeQue\ZipStream\Concerns\InteractsWithFileOptions;
+use ExeQue\ZipStream\Contracts\HasContext;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Exceptions\FileNotFoundException;
 use ExeQue\ZipStream\Exceptions\FileUnavailableException;
-use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Filesystem\FilesystemAdapter;
 
-class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
+class DiskFile implements HasContext, StreamableToZip, HasFileOptions, Verifiable
 {
     use InteractsWithFileOptions;
+    use InteractsWithContext;
     use InteractsWithDestination;
 
     private function __construct(
-        private Filesystem $disk,
+        private FilesystemAdapter $disk,
         private string $source,
         private string $destination,
     ) {
@@ -25,13 +28,26 @@ class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
     }
 
     public static function make(
-        Filesystem $disk,
+        FilesystemAdapter $disk,
         string $source,
         ?string $destination = null,
     ): static {
         $destination ??= basename($source);
 
         return new self($disk, $source, $destination);
+    }
+
+    /**
+     * Where this entry is read from, on the disk it belongs to.
+     */
+    public function source(): string
+    {
+        return $this->source;
+    }
+
+    public function disk(): FilesystemAdapter
+    {
+        return $this->disk;
     }
 
     public function stream()
@@ -47,13 +63,9 @@ class DiskFile implements StreamableToZip, HasFileOptions, Verifiable
 
     public function verify(): void
     {
-        if (!$this->disk->exists($this->source)) {
-            FileNotFoundException::forDisk($this->source);
-        }
-
-        $directory = dirname($this->source);
-
-        if (in_array($this->source, $this->disk->directories($directory === '.' ? '' : $directory))) {
+        // One request, and false for a directory: exists() plus a directories() listing needed two
+        // per entry, which on S3 is 1000 requests for a 500 file archive before a byte is read.
+        if (!$this->disk->fileExists($this->source)) {
             FileNotFoundException::forDisk($this->source);
         }
     }

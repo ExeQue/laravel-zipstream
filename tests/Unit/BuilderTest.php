@@ -4,12 +4,20 @@ declare(strict_types=1);
 
 namespace Tests\Unit;
 
+use DateInterval;
 use ExeQue\ZipStream\Builder;
 use ExeQue\ZipStream\Content\Directory;
 use ExeQue\ZipStream\Content\DiskFile;
 use ExeQue\ZipStream\Content\LocalFile;
 use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\Contracts\Event;
+use ExeQue\ZipStream\Events\Contracts\LifecycleEvent;
+use ExeQue\ZipStream\Events\ProcessAborted;
+use ExeQue\ZipStream\Events\StreamedBytes;
+use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Exceptions\ArchiveFrozenException;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -19,6 +27,7 @@ use Psr\Http\Message\StreamInterface;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Tests\Support\AssertableZipFile;
 use Tests\Support\Invader;
+use ZipArchive;
 use ZipStream\CompressionMethod;
 
 covers(Builder::class);
@@ -58,8 +67,7 @@ describe(Builder::class, function () {
 
     it('can add content from disk', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
+        $disk->shouldReceive('fileExists')->andReturnTrue();
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt', 'dest.txt');
@@ -73,8 +81,7 @@ describe(Builder::class, function () {
 
     it('can add content from disk using default destination', function () {
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('exists')->andReturnTrue();
-        $disk->shouldReceive('directories')->with('path/to')->andReturn([]);
+        $disk->shouldReceive('fileExists')->andReturnTrue();
         $this->filesystemManager->shouldReceive('disk')->with('s3')->andReturn($disk);
 
         $this->builder->fromDisk('s3', 'path/to/file.txt');
@@ -84,6 +91,38 @@ describe(Builder::class, function () {
 
         $exists = collect($entries)->contains(fn ($entry) => $entry->destination() === 'file.txt');
         expect($exists)->toBeTrue();
+    });
+
+    it('adds every file under a local directory, sizes included', function () {
+        $root = sys_get_temp_dir() . '/' . uniqid('zipdir');
+        mkdir($root . '/nested', 0777, true);
+        file_put_contents($root . '/a.txt', 'one');
+        file_put_contents($root . '/nested/b.txt', 'two');
+
+        $this->builder->fromLocalDirectory($root, 'files');
+
+        $entries = collect(Invader::make($this->builder)->pending->entries());
+
+        expect($entries->map(fn ($entry) => $entry->destination())->sort()->values()->all())
+            ->toBe(['files/a.txt', 'files/nested/b.txt'])
+            ->and($entries->every(fn ($entry) => $entry->getFileOptions()->exactSize > 0))->toBeTrue();
+
+        // Not recursive: only the top level.
+        $shallow = new Builder($this->filesystemManager, $this->config);
+        $shallow->fromLocalDirectory($root, recursive: false);
+
+        expect(Invader::make($shallow)->pending->entries())->toHaveCount(1);
+
+        // An empty destination puts the files at the root of the archive.
+        $root_level = new Builder($this->filesystemManager, $this->config);
+        $root_level->fromLocalDirectory($root, '');
+
+        expect(collect(Invader::make($root_level)->pending->entries())->map(fn ($entry) => $entry->destination())->sort()->values()->all())
+            ->toBe(['a.txt', 'nested/b.txt']);
+
+        array_map('unlink', [$root . '/a.txt', $root . '/nested/b.txt']);
+        rmdir($root . '/nested');
+        rmdir($root);
     });
 
     it('can add content from local path using default destination', function () {
@@ -137,11 +176,31 @@ describe(Builder::class, function () {
         expect($exists)->toBeTrue();
     });
 
+    it('goes back to the configured zero header, rather than to null', function () {
+        $config = Mockery::mock(Repository::class);
+        $config->shouldReceive('get')->with('laravel-zipstream.enable_zero_header')->andReturnTrue();
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
+
+        $builder = new Builder($this->filesystemManager, $config);
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeTrue();
+
+        $builder->withoutZeroHeader();
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeFalse();
+
+        // Nothing sits above the archive, so this is the config value - not null, which the option
+        // cannot hold and ZipStream would not take.
+        $builder->inheritZeroHeader();
+
+        expect($builder->getZipOptions()->enableZeroHeader)->toBeTrue();
+    });
+
     it('can set ZIP options fluently', function () {
         $this->builder
             ->compressionMethod(CompressionMethod::STORE)
             ->deflateLevel(9)
-            ->zeroHeader(true);
+            ->withZeroHeader();
 
         $options = $this->builder->getZipOptions();
 
@@ -168,7 +227,7 @@ describe(Builder::class, function () {
 
     it('can output as string', function () {
         $this->builder->fromRaw('test.txt', 'content');
-        $output = $this->builder->output();
+        $output = $this->builder->toString();
 
         expect($output)->toBeString()
             ->and($output)->not->toBeEmpty();
@@ -176,9 +235,36 @@ describe(Builder::class, function () {
 
     it('can output as stream', function () {
         $this->builder->fromRaw('test.txt', 'content');
-        $output = $this->builder->output(true);
+        $output = $this->builder->toStream();
 
         expect($output)->toBeInstanceOf(StreamInterface::class);
+
+        $path = $this->createTestFile();
+        file_put_contents($path, $output->getContents());
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('builds the output stream as it is read', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $output = $this->builder->store()->toStream();
+
+        memory_reset_peak_usage();
+        $baseline = memory_get_usage();
+        $read = 0;
+
+        while (! $output->eof()) {
+            $read += strlen($output->read(256 * 1024));
+        }
+
+        expect($read)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and(memory_get_peak_usage() - $baseline)->toBeLessThan(8 * 1024 * 1024);
     });
 
     it('can save to local path', function () {
@@ -195,13 +281,566 @@ describe(Builder::class, function () {
     });
 
     it('can save to disk', function () {
+        $path = $this->createTestFile();
+
         $disk = Mockery::mock(FilesystemAdapter::class);
-        $disk->shouldReceive('writeStream')->once()->with('archive.zip', Mockery::any());
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')
+            ->once()
+            ->with('archive.zip', Mockery::any(), ['part_size' => 1024])
+            ->andReturnUsing(fn ($target, $handle) => stream_copy_to_stream($handle, fopen($path, 'w+b')) !== false);
 
         $this->builder->fromRaw('test.txt', 'content');
-        $size = $this->builder->saveToDisk($disk, 'archive.zip');
+        $size = $this->builder->saveToDisk($disk, 'archive.zip', ['part_size' => 1024]);
 
-        expect($size)->toBeGreaterThan(0);
+        expect($size)->toBe(filesize($path));
+
+        (new AssertableZipFile($path))->path('test.txt')->exists()->contains('content');
+    });
+
+    it('streams to disk without buffering the whole archive', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        for ($i = 0; $i < 64; $i++) {
+            $this->builder->fromLocal($source, "file-$i.bin");
+        }
+
+        $peak = null;
+        $read = 0;
+
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) use (&$peak, &$read) {
+            memory_reset_peak_usage();
+            $baseline = memory_get_usage();
+
+            while (! feof($handle)) {
+                $read += strlen(fread($handle, 256 * 1024));
+            }
+
+            $peak = memory_get_peak_usage() - $baseline;
+
+            return true;
+        });
+
+        $size = $this->builder->store()->saveToDisk($disk, 'archive.zip');
+
+        // Bounded by the chunk plus the rewindable head, not by the 64 MB archive.
+        expect($size)->toBeGreaterThan(64 * 1024 * 1024)
+            ->and($read)->toBe($size)
+            ->and($peak)->toBeLessThan(16 * 1024 * 1024);
+    });
+
+    it('rethrows a failure while building and removes the partial archive', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->once()->with('archive.zip')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            // Mimic a disk that is not set to throw: the failure is swallowed.
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldReceive('delete')->once()->with('archive.zip');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(FileUnavailableException::class);
+    });
+
+    it('keeps a file that was already on the disk when building fails', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->once()->with('archive.zip')->andReturnTrue();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldNotReceive('delete');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToDisk($disk, 'archive.zip'))->toThrow(FileUnavailableException::class);
+    });
+
+    it('reports archive bytes as they are written', function () {
+        $chunks = [];
+
+        $this->builder
+            ->on(function (StreamedBytes $event) use (&$chunks) {
+                $chunks[] = [$event->written, $event->context->bytes->done];
+            })
+            ->fromLocal(__FILE__, 'builder.php');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        expect($chunks)->not->toBeEmpty()
+            ->and(array_sum(array_column($chunks, 0)))->toBe($size)
+            ->and(end($chunks)[1])->toBe($size);
+    });
+
+    it('collects bytes before reporting progress', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(4 * 1024 * 1024));
+
+        $events = [];
+
+        $this->builder
+            ->store()
+            ->progressEveryBytes(1024 * 1024)
+            ->on(function (StreamedBytes $event) use (&$events) {
+                $events[] = $event;
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        $written = array_map(fn (StreamedBytes $event) => $event->written, $events);
+
+        // Four full chunks, plus whatever the central directory adds on the end.
+        expect($events)->toHaveCount(5)
+            ->and(array_sum($written))->toBe($size)
+            ->and(end($events)->context->bytes->done)->toBe($size)
+            // Every event but the last carries at least the threshold.
+            ->and(array_slice($written, 0, -1))->each->toBeGreaterThanOrEqual(1024 * 1024);
+    });
+
+    it('reports every write when the threshold is zero', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(1024 * 1024));
+
+        $calls = 0;
+
+        $this->builder
+            ->store()
+            ->progressEveryBytes(0)
+            ->on(function (StreamedBytes $event) use (&$calls) {
+                $calls++;
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        // PHP hands the stream 8 KB at a time.
+        expect($calls)->toBeGreaterThan($size / (16 * 1024));
+    });
+
+    it('reports the tail of the archive even below the threshold', function () {
+        $last = null;
+
+        $this->builder
+            ->progressEveryBytes(64 * 1024 * 1024)
+            ->on(function (StreamedBytes $event) use (&$last) {
+                $last = $event;
+            })
+            ->fromRaw('test.txt', 'content');
+
+        $size = $this->builder->saveToLocal($this->createTestFile());
+
+        expect($last)->not->toBeNull()
+            ->and($last->context->bytes->done)->toBe($size);
+    });
+
+    it('reports progress no more often than the interval', function () {
+        $source = $this->createTestFile();
+        file_put_contents($source, random_bytes(8 * 1024 * 1024));
+
+        $stamps = [];
+
+        $this->builder
+            ->store()
+            ->progressEveryInterval('PT1S')
+            ->on(function (StreamedBytes $event) use (&$stamps) {
+                $stamps[] = microtime(true);
+            })
+            ->fromLocal($source, 'payload.bin');
+
+        $this->builder->saveToLocal($this->createTestFile());
+
+        // 8 MB is written well inside a second, so only the flush at the end reports.
+        expect($stamps)->toHaveCount(1);
+    });
+
+    it('takes an interval as a DateInterval too', function () {
+        $this->builder
+            ->progressEveryInterval(new DateInterval('PT1S'))
+            ->fromRaw('test.txt', 'content');
+
+        $interval = Invader::make($this->builder)->progressEvery;
+
+        expect($interval->isTimeBased())->toBeTrue()
+            ->and($interval->seconds)->toBe(1.0);
+    });
+
+    it('names the entry being written on the progress event', function () {
+        $seen = [];
+
+        $this->builder
+            ->progressEveryBytes(0)
+            ->on(function (StreamedBytes $event) use (&$seen) {
+                $seen[] = [$event->context->entry?->destination(), $event->context->entryData()];
+            })
+            ->fromRaw('first.txt', 'content')
+            ->add(Raw::make('second.txt', 'more content')->context(['media' => 7]));
+
+        $this->builder->saveToLocal($this->createTestFile());
+
+        $entries = array_column($seen, 0);
+
+        expect($entries)->toContain('first.txt', 'second.txt')
+            // The central directory is written with no entry open.
+            ->and(end($entries))->toBeNull()
+            ->and(array_column($seen, 1))->toContain(['media' => 7]);
+    });
+
+    it('reports archive bytes on every output path', function (string $path) {
+        $total = 0;
+
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->andReturnUsing(
+            fn ($target, $handle) => stream_get_contents($handle) !== false,
+        );
+
+        $this->builder
+            ->on(function (StreamedBytes $event) use (&$total) {
+                $total = $event->context->bytes->done;
+            })
+            ->fromRaw('test.txt', 'content');
+
+        match ($path) {
+            'output'      => $this->builder->toString(),
+            'stream'      => $this->builder->toStream()->getContents(),
+            'saveToLocal' => $this->builder->saveToLocal($this->createTestFile()),
+            'saveToDisk'  => $this->builder->saveToDisk($disk, 'archive.zip'),
+            'toResponse'  => captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent()),
+        };
+
+        expect($total)->toBeGreaterThan(0);
+    })->with(['output', 'stream', 'saveToLocal', 'saveToDisk', 'toResponse']);
+
+    it('does not report archive bytes to a lifecycle handler', function () {
+        $types = [];
+
+        $this->builder
+            ->on(function (LifecycleEvent $event) use (&$types) {
+                $types[] = $event::class;
+            })
+            ->fromLocal(__FILE__, 'builder.php')
+            ->saveToLocal($this->createTestFile());
+
+        expect($types)->not->toBeEmpty();
+    });
+
+    it('can be aborted from an event handler', function () {
+        $aborted = false;
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->on(function (ProcessAborted $event) use (&$aborted) {
+                $aborted = true;
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        $path = $this->createTestFile();
+        $this->builder->saveToLocal($path);
+
+        $archive = new ZipArchive();
+        $archive->open($path);
+
+        // The entry being streamed when abort() was called still finishes; the rest is skipped.
+        expect($archive->numFiles)->toBe(2)
+            ->and($archive->getFromName('second.txt'))->toBe('two')
+            ->and($archive->getFromName('third.txt'))->toBeFalse()
+            ->and($aborted)->toBeTrue();
+
+        $archive->close();
+    });
+
+    it('discards a local archive it was building', function () {
+        $path = sys_get_temp_dir() . '/' . uniqid('ziptest') . '.zip';
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort(discard: true);
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToLocal($path))->toBeNull()
+            ->and(file_exists($path))->toBeFalse()
+            ->and(glob(sys_get_temp_dir() . '/ziptest*.part'))->toBeEmpty();
+    });
+
+    it('discards an archive it was writing to a disk', function () {
+        $disk = Mockery::mock(FilesystemAdapter::class);
+        $disk->shouldReceive('exists')->andReturnFalse();
+        $disk->shouldReceive('writeStream')->once()->andReturnUsing(function ($target, $handle) {
+            try {
+                stream_get_contents($handle);
+            } catch (\Throwable) {
+                return false;
+            }
+
+            return true;
+        });
+        $disk->shouldReceive('delete')->once()->with('archive.zip');
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort(discard: true);
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToDisk($disk, 'archive.zip'))->toBeNull();
+    });
+
+    it('keeps what it wrote when aborting without discarding', function () {
+        $path = $this->createTestFile();
+
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        expect($this->builder->saveToLocal($path))->toBeGreaterThan(0);
+
+        $archive = new ZipArchive();
+        $archive->open($path);
+
+        // The entry that was streaming when abort() was called still finishes; the third is skipped.
+        expect($archive->numFiles)->toBe(2);
+
+        $archive->close();
+    });
+
+    it('does not warn when the local directory already exists', function () {
+        $path = $this->createTestFile();
+        $warnings = [];
+
+        set_error_handler(function (int $severity, string $message) use (&$warnings) {
+            $warnings[] = $message;
+
+            return true;
+        }, E_WARNING);
+
+        try {
+            $this->builder->fromRaw('test.txt', 'content')->saveToLocal($path);
+        } finally {
+            restore_error_handler();
+        }
+
+        expect($warnings)->toBeEmpty();
+    });
+
+    it('escapes a filename with quotes and non-ascii characters', function () {
+        $this->builder->as('Årsrapport "2026"');
+
+        $disposition = $this->builder->toResponse(null)->headers->get('Content-Disposition');
+
+        expect($disposition)->toContain('filename="Arsrapport \\"2026\\".zip"')
+            ->and($disposition)->toContain("filename*=utf-8''%C3%85rsrapport%20%222026%22.zip");
+    });
+
+    it('rejects a filename containing line breaks', function () {
+        expect(fn () => $this->builder->as("archive.zip\r\nX-Injected: 1"))
+            ->toThrow(InvalidFilenameException::class);
+    });
+
+    it('removes a partial local archive when building fails', function () {
+        $path = sys_get_temp_dir() . '/' . uniqid('ziptest') . '.zip';
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToLocal($path))->toThrow(FileUnavailableException::class)
+            ->and(file_exists($path))->toBeFalse();
+    });
+
+    it('leaves a local file that was already there intact when building fails', function () {
+        $path = $this->createTestFile();
+        file_put_contents($path, 'previous archive');
+
+        $source = tempnam(sys_get_temp_dir(), 'ziptest');
+        $this->builder->fromRaw('first.txt', 'content')->fromLocal($source, 'gone.txt');
+        unlink($source);
+
+        expect(fn () => $this->builder->saveToLocal($path))->toThrow(FileUnavailableException::class);
+
+        // The archive is built beside the target, so the previous one is neither truncated nor removed.
+        expect(file_get_contents($path))->toBe('previous archive')
+            ->and(glob(dirname($path) . '/*.part'))->toBeEmpty();
+    });
+
+    it('builds a full archive again after an abort', function () {
+        $this->builder
+            ->on(function (StreamingFile $event) {
+                if ($event->file->destination() === 'second.txt') {
+                    $this->builder->abort();
+                }
+            })
+            ->fromRaw('first.txt', 'one')
+            ->fromRaw('second.txt', 'two')
+            ->fromRaw('third.txt', 'three');
+
+        $aborted = $this->createTestFile();
+        $this->builder->saveToLocal($aborted);
+
+        $again = $this->createTestFile();
+        $this->builder->saveToLocal($again);
+
+        $first = new ZipArchive();
+        $first->open($aborted);
+        $second = new ZipArchive();
+        $second->open($again);
+
+        // The abort belongs to the run it was called in, not to the builder.
+        expect($first->numFiles)->toBe(2)
+            ->and($second->numFiles)->toBe(2);
+
+        $first->close();
+        $second->close();
+    });
+
+    it('takes the output management default from the config', function () {
+        $config = Mockery::mock(Repository::class);
+        $config->shouldReceive('get')->with('laravel-zipstream.manage_output')->andReturnFalse();
+        $config->shouldReceive('get')->andReturnUsing(fn ($key, $default = null) => $default);
+
+        $builder = (new Builder($this->filesystemManager, $config))->fromRaw('test.txt', 'content');
+
+        expect($builder->toResponse(null)->headers->has('Content-Encoding'))->toBeFalse();
+    });
+
+    it('declares an identity encoding so a proxy does not buffer the stream', function () {
+        $this->builder->fromRaw('test.txt', 'content');
+
+        expect($this->builder->toResponse(null)->headers->get('Content-Encoding'))->toBe('identity')
+            ->and($this->builder->doesntManageOutput()->toResponse(null)->headers->has('Content-Encoding'))
+            ->toBeFalse();
+    });
+
+    it('leaves the output layer alone under the cli sapi', function () {
+        // Closing the buffers here would flush the test harness' own capture out from under it.
+        $level = ob_get_level();
+        $zlib = ini_get('zlib.output_compression');
+
+        $this->builder->fromRaw('test.txt', 'content');
+
+        captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent());
+
+        expect(ob_get_level())->toBe($level)
+            ->and(ini_get('zlib.output_compression'))->toBe($zlib);
+    });
+
+    it('has a negative for every toggle', function () {
+        $this->builder->fromRaw('test.txt', 'content');
+
+        // manageOutput
+        expect($this->builder->doesntManageOutput()->toResponse(null)->headers->has('Content-Encoding'))
+            ->toBeFalse()
+            ->and($this->builder->manageOutput()->toResponse(null)->headers->get('Content-Encoding'))
+            ->toBe('identity');
+
+        // withContentLength
+        expect($this->builder->store()->withContentLength()->toResponse(null)->headers->has('Content-Length'))
+            ->toBeTrue()
+            ->and($this->builder->withoutContentLength()->toResponse(null)->headers->has('Content-Length'))
+            ->toBeFalse();
+
+        // withKnownSize
+        $invader = Invader::make($this->builder);
+
+        expect($invader->withKnownSize)->toBeFalse();
+
+        $this->builder->withKnownSize();
+
+        expect($invader->withKnownSize)->toBeTrue();
+
+        $this->builder->withoutKnownSize();
+
+        expect($invader->withKnownSize)->toBeFalse();
+
+        // withContext
+        $this->builder->withContext(['job' => 7]);
+
+        expect(Invader::make($this->builder)->events->context()->data)->toBe(['job' => 7]);
+
+        $this->builder->withoutContext();
+
+        expect(Invader::make($this->builder)->events->context()->data)->toBe([]);
+
+        // withVerification
+        $pending = Invader::make($invader->pending);
+
+        $this->builder->withoutVerification();
+
+        expect($pending->verify)->toBeFalse();
+
+        $this->builder->withVerification();
+
+        expect($pending->verify)->toBeTrue();
+    });
+
+    it('refuses an entry added after a Content-Length was promised', function () {
+        $this->builder->store()->withContentLength()->fromRaw('a.txt', str_repeat('a', 1024));
+
+        $declared = (int) $this->builder->toResponse(new Request())->headers->get('Content-Length');
+
+        expect($declared)->toBeGreaterThan(1024)
+            // The body is written when the response is sent, so the entries cannot move in between.
+            ->and(fn () => $this->builder->fromRaw('b.txt', str_repeat('b', 4096)))
+            ->toThrow(ArchiveFrozenException::class, 'b.txt');
+
+        $body = captureStreamedOutput(fn () => $this->builder->toResponse(new Request())->sendContent());
+
+        expect(strlen($body))->toBe($declared);
+    });
+
+    it('stays open when no length was promised', function () {
+        $this->builder->fromRaw('a.txt', 'content');
+
+        $response = $this->builder->toResponse(new Request());
+
+        expect($response->headers->has('Content-Length'))->toBeFalse();
+
+        // Nothing was promised, so a later entry only makes the archive bigger.
+        $this->builder->fromRaw('b.txt', 'more content');
+
+        $body = captureStreamedOutput(fn () => $response->sendContent());
+
+        expect($body)->toContain('b.txt');
     });
 
     it('can return a response', function () {
@@ -209,8 +848,8 @@ describe(Builder::class, function () {
         $response = $this->builder->toResponse(null);
 
         expect($response)->toBeInstanceOf(StreamedResponse::class)
-            ->and($response->headers->get('Content-Disposition'))->toBe('attachment; filename="test.zip"')
-            ->and($response->headers->get('Content-Type'))->toBe('application/x-zip');
+            ->and($response->headers->get('Content-Disposition'))->toBe('attachment; filename=test.zip')
+            ->and($response->headers->get('Content-Type'))->toBe('application/zip');
     });
 
     it('streams the content of the response', function () {
@@ -281,8 +920,8 @@ describe(Builder::class, function () {
         $this->builder
             ->deflate()
             ->withContentLength()
-            ->on(EventType::Any, function () use (&$fired) {
-                $fired[] = func_get_args();
+            ->on(function (Event $event) use (&$fired) {
+                $fired[] = $event;
             })
             ->fromRaw('test.txt', 'content');
 

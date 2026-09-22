@@ -2,8 +2,10 @@
 
 namespace ExeQue\ZipStream\Content;
 
+use ExeQue\ZipStream\Concerns\InteractsWithContext;
 use ExeQue\ZipStream\Concerns\InteractsWithDestination;
 use ExeQue\ZipStream\Concerns\InteractsWithFileOptions;
+use ExeQue\ZipStream\Contracts\HasContext;
 use ExeQue\ZipStream\Contracts\HasFileOptions;
 use ExeQue\ZipStream\Contracts\RetainsStream;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
@@ -12,9 +14,10 @@ use ExeQue\ZipStream\Exceptions\UnsupportedInputException;
 use ExeQue\ZipStream\Options\FileOptions;
 use Psr\Http\Message\StreamInterface;
 
-class Raw implements StreamableToZip, HasFileOptions, Verifiable, RetainsStream
+class Raw implements HasContext, StreamableToZip, HasFileOptions, Verifiable, RetainsStream
 {
     use InteractsWithFileOptions;
+    use InteractsWithContext;
     use InteractsWithDestination;
 
     public function __construct(

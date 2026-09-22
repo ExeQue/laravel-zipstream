@@ -2,43 +2,49 @@
 
 namespace ExeQue\ZipStream;
 
-use Closure;
+use ExeQue\ZipStream\Concerns\AddsContent;
+use ExeQue\ZipStream\Concerns\InteractsWithKnownSize;
+use ExeQue\ZipStream\Concerns\InteractsWithOutputLayer;
+use ExeQue\ZipStream\Concerns\InteractsWithProgress;
 use ExeQue\ZipStream\Concerns\InteractsWithZipOptions;
-use ExeQue\ZipStream\Content\Directory;
-use ExeQue\ZipStream\Content\DiskFile;
-use ExeQue\ZipStream\Content\LocalFile;
-use ExeQue\ZipStream\Content\Raw;
-use ExeQue\ZipStream\Contracts\CanStreamToZip;
-use ExeQue\ZipStream\Contracts\HasZipOptions;
-use ExeQue\ZipStream\Contracts\StreamableToZip;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Concerns\ProducesArchiveStreams;
+use ExeQue\ZipStream\Concerns\SavesToDisk;
+use ExeQue\ZipStream\Contracts\ArchiveBuilder;
 use ExeQue\ZipStream\Events\EventQueue;
+use ExeQue\ZipStream\Events\SavedToFilesystem;
+use ExeQue\ZipStream\Events\SavingToFilesystem;
+use ExeQue\ZipStream\Events\StreamedResponse;
+use ExeQue\ZipStream\Events\StreamingResponse;
+use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
+use ExeQue\ZipStream\Exceptions\InvalidFilenameException;
+use ExeQue\ZipStream\Options\ProgressInterval;
 use GuzzleHttp\Psr7\Stream;
 use GuzzleHttp\Psr7\Utils;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Filesystem\Factory;
-use Illuminate\Contracts\Support\Responsable;
-use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\File as Filesystem;
 use Illuminate\Support\Str;
 use Illuminate\Support\Traits\Macroable;
-use Psr\Http\Message\StreamInterface;
-use Symfony\Component\HttpFoundation\StreamedResponse;
-use ZipStream\Exception\OverflowException;
-use ZipStream\Exception\SimulationFileUnknownException;
+use Symfony\Component\HttpFoundation\HeaderUtils;
+use Symfony\Component\HttpFoundation\StreamedResponse as SymfonyStreamedResponse;
 use ZipStream\OperationMode;
 use ZipStream\ZipStream;
 
-class Builder implements Responsable, HasZipOptions
+class Builder implements ArchiveBuilder
 {
+    // In the order an archive goes through them.
+    use AddsContent;
     use InteractsWithZipOptions;
+    use InteractsWithKnownSize;
+    use InteractsWithProgress;
+    use ProducesArchiveStreams;
+    use SavesToDisk;
+    use InteractsWithOutputLayer;
     use Macroable;
 
     private string $filename;
 
     private Pending $pending;
-
-    private bool $withContentLength = false;
 
     public function __construct(
         private Factory $filesystemManager,
@@ -47,12 +53,27 @@ class Builder implements Responsable, HasZipOptions
     ) {
         $this->pending = new Pending();
 
+        $this->progressEvery = ProgressInterval::fromConfig($config->get('laravel-zipstream.progress_every'));
+        $this->managesOutput = (bool) ($config->get('laravel-zipstream.manage_output') ?? true);
+
         $this->prepareZipOptions($config);
         $this->as('archive');
     }
 
+    /**
+     * The queue this archive is built from, for a subclass that needs to look at it.
+     */
+    protected function pending(): Pending
+    {
+        return $this->pending;
+    }
+
     public function as(string $filename): static
     {
+        if (preg_match('/[\r\n]/', $filename) === 1) {
+            InvalidFilenameException::forFilename($filename);
+        }
+
         if (Str::of($filename)->lower()->doesntEndWith('.zip')) {
             $filename .= '.zip';
         }
@@ -69,6 +90,29 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
+    public function withContext(array $context): static
+    {
+        $state = $this->events->state();
+
+        $state->data = [...$state->data, ...$context];
+
+        return $this;
+    }
+
+    public function withoutContext(): static
+    {
+        $this->events->state()->data = [];
+
+        return $this;
+    }
+
+    public function withVerification(): static
+    {
+        $this->pending->withVerification();
+
+        return $this;
+    }
+
     public function withoutVerification(): static
     {
         $this->pending->withoutVerification();
@@ -76,127 +120,53 @@ class Builder implements Responsable, HasZipOptions
         return $this;
     }
 
-    public function withContentLength(bool $enabled = true): static
+    public function abort(bool $discard = false): static
     {
-        $this->withContentLength = $enabled;
+        $this->pending->abort($discard);
 
         return $this;
-    }
-
-    public function add(StreamableToZip|CanStreamToZip|Directory $content, ?callable $modify = null): static
-    {
-        $modify = $this->resolveModifierCallback($modify);
-
-        $this->pending->add(
-            tap($content, $modify),
-        );
-
-        return $this;
-    }
-
-    public function fromDisk(
-        string|FilesystemAdapter $disk,
-        string $source,
-        ?string $destination = null,
-        ?callable $modify = null,
-    ): static {
-        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-
-        $destination ??= basename($source);
-
-        return $this->add(DiskFile::make($disk, $source, $destination), $modify);
-    }
-
-    public function fromLocal(
-        string $source,
-        ?string $destination = null,
-        ?callable $modify = null,
-    ): static {
-        return $this->add(LocalFile::make($source, $destination), $modify);
-    }
-
-    public function fromRaw(
-        string $destination,
-        string $content,
-        ?callable $modify = null,
-    ): static {
-        return $this->add(Raw::make($destination, $content), $modify);
-    }
-
-    public function emptyDirectory(string $directory, ?callable $modify = null): static
-    {
-        return $this->add(new Directory($directory), $modify);
-    }
-
-    public function output(bool $stream = false): string|StreamInterface
-    {
-        $output = new Stream(fopen('php://temp', 'w+b'));
-
-        $zipStream = $this->prepareZipStream($output);
-
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
-
-        $zipStream->finish();
-
-        $output->rewind();
-
-        if ($stream) {
-            return $output;
-        }
-
-        $contents = $output->getContents();
-
-        $output->close();
-
-        return $contents;
     }
 
     public function saveToLocal(string $path): ?int
     {
+        $directory = dirname($path);
 
-        Filesystem::makeDirectory(dirname($path), 0755, true, true);
+        // makeDirectory() warns about a directory that is already there, which a strict error handler turns into an error.
+        is_dir($directory) || Filesystem::makeDirectory($directory, 0755, true, true);
 
-        $this->events->call(EventType::SavingToFilesystem, $path);
+        $this->resolveKnownSize();
 
-        $stream = new Stream(fopen($path, 'w+b'));
+        $this->events->dispatch(SavingToFilesystem::class, $path);
 
-        $zipStream = $this->prepareZipStream($stream);
+        // Built beside the target and moved into place, so a failure leaves whatever was there
+        // untouched rather than truncated. rename() is atomic within a filesystem.
+        $temporary = $path . '.' . bin2hex(random_bytes(4)) . '.part';
+        $stream = new Stream(fopen($temporary, 'w+b'));
+        $failed = true;
 
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
+        try {
+            $zipStream = $this->prepareZipStream($stream);
 
-        $zipStream->finish();
+            $this->pending->process($zipStream, $this->events, $this->getZipOptions());
 
-        $size = $stream->getSize();
+            $this->finishArchive($zipStream);
 
-        $stream->close();
+            $size = $stream->getSize();
+            $failed = false;
+        } catch (ArchiveDiscardedException) {
+            // Nothing to keep and nothing to report: the .part file goes in the finally below.
+            return null;
+        } finally {
+            $stream->close();
 
-        $this->events->call(EventType::SavedToFilesystem, $path, $size);
+            if ($failed) {
+                unlink($temporary);
+            }
+        }
 
-        return $size;
-    }
+        rename($temporary, $path);
 
-    public function saveToDisk(string|FilesystemAdapter $disk, string $path): ?int
-    {
-        $this->events->call(EventType::SavingToDisk, $disk, $path);
-
-        $disk = is_string($disk) ? $this->filesystemManager->disk($disk) : $disk;
-        $stream = new Stream(fopen('php://temp', 'w+b'));
-
-        $zipStream = $this->prepareZipStream($stream);
-
-        $this->pending->process($zipStream, $this->events, $this->getZipOptions());
-
-        $zipStream->finish();
-
-        $size = $stream->getSize();
-
-        $fh = $stream->detach();
-
-        $disk->writeStream($path, $fh);
-
-        fclose($fh);
-
-        $this->events->call(EventType::SavedToDisk, $disk, $path, $size);
+        $this->events->dispatch(SavedToFilesystem::class, $path, $size);
 
         return $size;
     }
@@ -212,10 +182,16 @@ class Builder implements Responsable, HasZipOptions
 
         $outputStream ??= fopen('php://output', 'w+b');
 
+        $outputStream = Utils::streamFor($outputStream);
+
+        if ($operationMode === OperationMode::NORMAL) {
+            $outputStream = $this->reportingProgress($outputStream);
+        }
+
         return new ZipStream(
             operationMode: $operationMode,
             comment: $options->comment,
-            outputStream: Utils::streamFor($outputStream),
+            outputStream: $outputStream,
             defaultCompressionMethod: $options->compressionMethod,
             defaultDeflateLevel: $options->deflateLevel,
             defaultEnableZeroHeader: $options->enableZeroHeader,
@@ -224,67 +200,60 @@ class Builder implements Responsable, HasZipOptions
         );
     }
 
-    public function toResponse($request): StreamedResponse
+    public function toResponse($request): SymfonyStreamedResponse
     {
         $headers = [
             'X-Accel-Buffering'   => 'no',
-            'Content-Type'        => 'application/x-zip',
-            'Content-Disposition' => "attachment; filename=\"$this->filename\"",
+            'Content-Type'        => 'application/zip',
+            // nginx's gzip filter buffers whatever X-Accel-Buffering says, unless an encoding is declared.
+            ...($this->managesOutput ? ['Content-Encoding' => 'identity'] : []),
+            // Quotes and non-ASCII in a filename need escaping and an RFC 6266 fallback.
+            'Content-Disposition' => HeaderUtils::makeDisposition(
+                HeaderUtils::DISPOSITION_ATTACHMENT,
+                $this->filename,
+                Str::ascii($this->filename) ?: 'archive.zip',
+            ),
         ];
 
-        if ($this->withContentLength && ($size = $this->calculateSize()) !== null) {
+        if ($this->withContentLength && ($size = $this->resolvedSize()) !== null) {
             $headers['Content-Length'] = $size;
+
+            // The body is written when the response is sent, which is later than this. An entry added
+            // in between would make the header a lie, and a lie about a length truncates a download.
+            $this->pending->freeze();
         }
 
-        return new StreamedResponse(
+        return new SymfonyStreamedResponse(
             function () {
-                $this->events->call(EventType::StreamingResponse);
+                $restore = $this->clearTheWay();
+
+                $this->resolveKnownSize();
+
+                $this->events->dispatch(StreamingResponse::class);
 
                 $stream = $this->prepareZipStream();
 
-                $this->pending->process($stream, $this->events, $this->getZipOptions());
+                try {
+                    $this->pending->process($stream, $this->events, $this->getZipOptions());
 
-                $stream->finish();
+                    $this->finishArchive($stream);
+                } catch (ArchiveDiscardedException) {
+                    // The bytes already sent cannot be recalled, so stopping is all there is to do.
+                    return;
+                } finally {
+                    $restore();
+                }
 
-                $this->events->call(EventType::StreamedResponse);
+                $this->events->dispatch(StreamedResponse::class);
             },
             200,
             $headers,
         );
     }
 
-    /**
-     * Determine the exact archive size without performing any I/O.
-     *
-     * Returns null when a size cannot be known up front - every entry has to use
-     * CompressionMethod::STORE and carry a known exactSize for the simulation to succeed.
-     */
-    private function calculateSize(): ?int
+    public function on(callable $handler): static
     {
-        $sink = fopen('php://memory', 'w+b');
-        $simulation = $this->prepareZipStream($sink, OperationMode::SIMULATE_STRICT);
-
-        try {
-            // A fresh queue fires no user handlers, and - since it has no ProcessError
-            // handler - lets a failed simulation bubble out instead of being swallowed.
-            $this->pending->process($simulation, new EventQueue(), $this->getZipOptions());
-
-            return $simulation->finish();
-        } catch (SimulationFileUnknownException|OverflowException) {
-            return null;
-        } finally {
-            fclose($sink);
-        }
-    }
-
-    private function resolveModifierCallback(?callable $modify): Closure
-    {
-        return ($modify ?? static fn ($optionable) => null)(...);
-    }
-
-    public function on(EventType|array $type, callable $handler): static
-    {
-        $this->events->add($type, $handler);
+        $this->events->add($handler);
 
         return $this;
     }

@@ -14,6 +14,12 @@ class LaravelZipStreamServiceProvider extends ServiceProvider
             __DIR__ . '/../config/laravel-zipstream.php' => config_path('laravel-zipstream.php'),
         ], 'laravel-zipstream-config');
 
+        $this->publishes([
+            __DIR__ . '/../lang' => $this->app->langPath('vendor/laravel-zipstream'),
+        ], 'laravel-zipstream-translations');
+
         $this->mergeConfigFrom(__DIR__ . '/../config/laravel-zipstream.php', 'laravel-zipstream');
+
+        $this->loadTranslationsFrom(__DIR__ . '/../lang', 'laravel-zipstream');
     }
 }

@@ -6,6 +6,7 @@ services:
       - .:/var/www/html
     environment:
       - XDEBUG_MODE=coverage
+      - ZIPSTREAM_S3_ENDPOINT=http://minio:9000
   composer:
     extends:
       service: php
@@ -21,3 +22,14 @@ services:
     volumes:
       - .:/var/www/html
     entrypoint: [ "vendor/bin/testbench" ]
+  # S3-compatible storage for tests/Feature/SaveToS3Test.php - `docker compose up -d minio`.
+  # From the host: ZIPSTREAM_S3_ENDPOINT=http://localhost:9100 vendor/bin/pest
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin

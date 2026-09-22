@@ -9,7 +9,16 @@ use ExeQue\ZipStream\Contracts\RetainsStream;
 use ExeQue\ZipStream\Contracts\StreamableToZip;
 use ExeQue\ZipStream\Contracts\Verifiable;
 use ExeQue\ZipStream\Events\EventQueue;
-use ExeQue\ZipStream\Events\EventType;
+use ExeQue\ZipStream\Events\ProcessAborted;
+use ExeQue\ZipStream\Events\ProcessError;
+use ExeQue\ZipStream\Events\ProcessFinished;
+use ExeQue\ZipStream\Events\ProcessStarted;
+use ExeQue\ZipStream\Events\StreamedDirectory;
+use ExeQue\ZipStream\Events\StreamedFile;
+use ExeQue\ZipStream\Events\StreamingDirectory;
+use ExeQue\ZipStream\Events\StreamingFile;
+use ExeQue\ZipStream\Exceptions\ArchiveDiscardedException;
+use ExeQue\ZipStream\Exceptions\ArchiveFrozenException;
 use ExeQue\ZipStream\Options\FileOptions;
 use ExeQue\ZipStream\Options\ZipOptions;
 use Psr\Http\Message\StreamInterface;
@@ -23,11 +32,41 @@ class Pending
 
     private bool $stopOnConnectionAborted = false;
 
+    private bool $aborted = false;
+
+    private bool $discard = false;
+
+    private bool $frozen = false;
+
     private bool $verify = true;
 
-    public function add(StreamableToZip|CanStreamToZip|Directory $streamable): static
+    /**
+     * @param  bool  $verify  Pass false for an entry already known to exist, such as one out of a listing.
+     */
+    /**
+     * Refuse further entries: the archive has been measured, and its size is already promised.
+     */
+    public function freeze(): static
     {
-        if ($this->verify && $streamable instanceof Verifiable) {
+        $this->frozen = true;
+
+        return $this;
+    }
+
+    public function isFrozen(): bool
+    {
+        return $this->frozen;
+    }
+
+    public function add(StreamableToZip|CanStreamToZip|Directory $streamable, bool $verify = true): static
+    {
+        if ($this->frozen) {
+            ArchiveFrozenException::forContentLength(
+                $streamable instanceof CanStreamToZip ? $streamable::class : $streamable->destination(),
+            );
+        }
+
+        if ($verify && $this->verify && $streamable instanceof Verifiable) {
             $streamable->verify();
         }
 
@@ -50,9 +89,40 @@ class Pending
         return $this;
     }
 
+    /**
+     * The entries queued so far, in the order they were added.
+     *
+     * @return array<int, StreamableToZip|Directory>
+     */
+    public function entries(): array
+    {
+        return $this->entries;
+    }
+
     public function stopOnConnectionAborted(): static
     {
         $this->stopOnConnectionAborted = true;
+
+        return $this;
+    }
+
+    /**
+     * Stop after the entry being streamed right now.
+     *
+     * Remaining entries are skipped and the archive is finished, so what has been written stays a
+     * valid - if incomplete - zip.
+     */
+    public function abort(bool $discard = false): static
+    {
+        $this->aborted = true;
+        $this->discard = $this->discard || $discard;
+
+        return $this;
+    }
+
+    public function withVerification(): static
+    {
+        $this->verify = true;
 
         return $this;
     }
@@ -70,54 +140,61 @@ class Pending
         EventQueue $events = new EventQueue(),
         ?ZipOptions $zipOptions = null,
     ): void {
+        // A builder is reusable, so a previous abort must not silently empty the next archive.
+        $this->aborted = false;
+        $this->discard = false;
+
         $entries = collect($this->entries);
 
-        $events->call(EventType::ProcessStarted);
+        $state = $events->state();
+        $state->entriesTotal = $entries->count();
+        $state->entriesDone = 0;
+        $state->entry = null;
+
+        $events->dispatch(ProcessStarted::class);
 
         $directories = $entries->filter(fn ($entry) => $entry instanceof Directory);
         $files = $entries->filter(fn ($entry) => $entry instanceof StreamableToZip);
 
-        $directories->each(function (Directory $directory) use ($stream, $events) {
+        $directories->each(function (Directory $directory) use ($stream, $events, $state) {
             if ($this->aborted()) {
-                $events->call(EventType::ProcessAborted);
+                $this->stop($events);
 
                 return false;
             }
 
+            $state->entry = $directory;
+            $options = $directory->getFileOptions();
+
+            $events->dispatch(StreamingDirectory::class, $directory, $options);
+
             try {
-                $options = $directory->getFileOptions();
-
-                $events->call([
-                    EventType::StreamingDirectory,
-                    EventType::StreamingToZip,
-                ], $directory, $options);
-
                 $stream->addDirectory(
                     fileName: $directory->destination(),
                     comment: $options->comment,
                     lastModificationDateTime: $options->lastModified,
                 );
-
-                $events->call([
-                    EventType::StreamedDirectory,
-                    EventType::StreamedToZip,
-                ], $directory, $options);
             } catch (\Throwable $e) {
-                if (!$events->hasHandler(EventType::ProcessError)) {
-                    throw $e;
-                }
+                $this->reportOrThrow($events, $e);
 
-                $events->call(EventType::ProcessError, $e);
+                return null;
             }
+
+            $state->entriesDone++;
+
+            $events->dispatch(StreamedDirectory::class, $directory, $options);
+
+            $state->entry = null;
         });
 
-        $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions) {
+        $files->each(function (StreamableToZip $file) use ($stream, $events, $zipOptions, $state) {
             if ($this->aborted()) {
-                $events->call(EventType::ProcessAborted);
+                $this->stop($events);
 
                 return false;
             }
 
+            $state->entry = $file;
             $opened = null;
 
             try {
@@ -125,43 +202,70 @@ class Pending
                     ? $file->getFileOptions()
                     : new FileOptions();
 
-                $events->call([
-                    EventType::StreamingFile,
-                    EventType::StreamingToZip,
-                ], $file, $options);
+                $events->dispatch(StreamingFile::class, $file, $options);
 
-                $stream->addFileFromCallback(
-                    fileName: $file->destination(),
-                    callback: function () use ($file, &$opened) {
-                        return $opened = $file->stream();
-                    },
-                    comment: $options->comment,
-                    compressionMethod: $options->compressionMethod,
-                    deflateLevel: $options->deflateLevel,
-                    lastModificationDateTime: $options->lastModified,
-                    maxSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->maxSize : null,
-                    exactSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->exactSize : null,
-                    enableZeroHeader: $options->enableZeroHeader,
-                );
+                try {
+                    $stream->addFileFromCallback(
+                        fileName: $file->destination(),
+                        callback: function () use ($file, &$opened) {
+                            return $opened = $file->stream();
+                        },
+                        comment: $options->comment,
+                        compressionMethod: $options->compressionMethod,
+                        deflateLevel: $options->deflateLevel,
+                        lastModificationDateTime: $options->lastModified,
+                        maxSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->maxSize : null,
+                        exactSize: $this->sizeLimitsApply($options, $zipOptions) ? $options->exactSize : null,
+                        enableZeroHeader: $options->enableZeroHeader,
+                    );
+                } catch (\Throwable $e) {
+                    $this->reportOrThrow($events, $e);
 
-                $events->call([
-                    EventType::StreamedFile,
-                    EventType::StreamedToZip,
-                ], $file, $options);
-            } catch (\Throwable $e) {
-                if (!$events->hasHandler(EventType::ProcessError)) {
-                    throw $e;
+                    return null;
                 }
 
-                $events->call(EventType::ProcessError, $e);
+                $state->entriesDone++;
+
+                $events->dispatch(StreamedFile::class, $file, $options);
             } finally {
+                // Between entries nothing is being written, and the archive is closed with none open.
+                $state->entry = null;
+
                 if (!$file instanceof RetainsStream) {
                     $this->closeStream($opened);
                 }
             }
         });
 
-        $events->call(EventType::ProcessFinished);
+        $events->dispatch(ProcessFinished::class);
+    }
+
+    /**
+     * Leave the archive: kept as it stands, or thrown away.
+     */
+    private function stop(EventQueue $events): void
+    {
+        $events->dispatch(ProcessAborted::class);
+
+        if ($this->discard) {
+            // Unwinds past finish(), so the destination never sees a complete archive to keep.
+            throw ArchiveDiscardedException::make();
+        }
+    }
+
+    /**
+     * Route a failure from streaming an entry to a ProcessError handler, or out to the caller.
+     *
+     * Only the entry itself is covered: an exception from an event handler is the caller's own
+     * code failing, so it keeps bubbling up rather than being reported as a streaming error.
+     */
+    private function reportOrThrow(EventQueue $events, \Throwable $e): void
+    {
+        if (!$events->hasHandlerFor(ProcessError::class)) {
+            throw $e;
+        }
+
+        $events->dispatch(ProcessError::class, $e);
     }
 
     /**
@@ -200,6 +304,6 @@ class Pending
 
     private function aborted(): bool
     {
-        return $this->stopOnConnectionAborted && connection_aborted();
+        return $this->aborted || ($this->stopOnConnectionAborted && connection_aborted());
     }
 }

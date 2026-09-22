@@ -20,12 +20,15 @@ Use this skill when a Laravel application needs to create ZIP files from various
 - **Deflate**: The standard compression method used in ZIP files.
 - **Store**: A ZIP method that adds files without any compression.
 - **Zero Header**: A ZIP feature that allows streaming by providing file information at the end of the file instead of the beginning.
+- **Event**: A readonly object reporting something the builder did. A handler is registered by type-hinting the event it wants.
 
 ## Principles
 1. **Prefer Streaming**: Always use `toResponse()` or `saveToDisk()` to handle large archives without exhausting memory.
 2. **Explicit Destinations**: Clearly define the path within the ZIP to maintain a clean archive structure.
 3. **Smart Compression**: Use `store()` for already compressed formats (images, videos) and `deflate()` for text-based content to optimize performance.
 4. **Fluent Chaining**: Build the archive by chaining methods starting from the `Zip` facade.
+5. **Toggles Come in Pairs**: every `with*()` has a `without*()`, and `manageOutput()` has `doesntManageOutput()`.
+6. **Type-Hinted Events**: Register handlers with `on(fn (SomeEvent $event) => ...)`. The type hint is the registration - never pass an event name.
 
 ## Basic Archive Creation
 To create a simple ZIP and stream it to the browser:
@@ -44,6 +47,14 @@ The library supports multiple source types:
 ```php
 // From a Laravel Disk
 Zip::fromDisk('s3', 'source/path.pdf', 'internal/name.pdf');
+
+// Every file under a prefix or directory - one listing, sizes included, structure kept
+Zip::fromDiskDirectory('s3', 'events/2026/gala', 'gala');
+Zip::fromDiskDirectory('s3', 'thumbnails', recursive: false);
+Zip::fromLocalDirectory('/var/exports/2026', 'exports');
+
+// withKnownSize()/withContentLength() need an exactSize per entry. Entries without one are
+// grouped by directory and each directory listed once - never a request per file.
 
 // From a Local File Path
 Zip::fromLocal('/absolute/path/to/file.log', 'logs/app.log');
@@ -126,18 +137,171 @@ Zip::as('optimized.zip')
 Choose the appropriate output method:
 
 ```php
-// 1. Stream as Laravel Response
+// 1. Stream as Laravel Response - clears PHP's output layer first (zlib, buffers,
+//    Content-Encoding) so a large download streams rather than stalls
 return Zip::toResponse();
+Zip::doesntManageOutput()->toResponse();  // an app that manages its own buffering
+Zip::timeLimit(600)->toResponse();        // a limit of your own; 0 is the default, meaning none
 
 // 2. Save to Local Path
 Zip::saveToLocal('/path/to/archive.zip');
 
-// 3. Save to Laravel Disk
+// 3. Save to Laravel Disk - built while it uploads, never buffered locally
 Zip::saveToDisk('s3', 'backups/archive.zip');
 
-// 4. Get as String
-$content = Zip::output();
+// S3 caps a multipart upload at 10,000 parts, so raise part_size above ~50 GB
+Zip::saveToDisk('s3', 'backups/huge.zip', ['part_size' => 64 * 1024 * 1024]);
 
-// 5. Get as PSR-7 Stream
-$stream = Zip::output(true);
+// 4. Get as String
+$content = Zip::toString();
+
+// 5. Get as PSR-7 Stream - built as it is read, so read it once, front to back.
+// It is not seekable and getSize() is null.
+$stream = Zip::toStream();
 ```
+
+If `saveToDisk()` or `saveToLocal()` fails part-way, it deletes the target path, but only if that call created
+it - a file that was already there survives. On S3, `saveToDisk()` also aborts the multipart upload.
+
+## Events
+A handler declares what it listens for with its first parameter. There is no event name to pass:
+
+```php
+use ExeQue\ZipStream\Events\SavedToDisk;
+use ExeQue\ZipStream\Events\SavedToFilesystem;
+use ExeQue\ZipStream\Events\StreamedBytes;
+use ExeQue\ZipStream\Events\StreamedFile;
+
+Zip::as('archive.zip')
+    ->on(fn (StreamedFile $event) => Log::info("Added {$event->file->destination()}"))
+    ->on(fn (StreamedBytes $event) => Cache::put("zip:{$event->context->id}", $event->total))
+    ->on(fn (SavedToDisk|SavedToFilesystem $event) => Log::info("Saved to {$event->path}"))
+    ->fromDisk('public', 'images/photo1.jpg')
+    ->saveToDisk('s3', 'archive.zip');
+```
+
+Every event carries a `$context`. A union listens for several at once. A handler with no type-hinted first
+parameter throws `InvalidEventHandlerException` when registered.
+
+### Context
+`$event->context` describes the archive the event belongs to:
+
+- `id` - The same value for every event of one archive
+- `entry` - What is being streamed right now, `null` between entries
+- `entries` - `Entries`: done, total, percentage(), toHuman() - "10 of 125 files". The total is known before the first byte
+- `bytes` - `Bytes`: the same, plus doneToHuman()/totalToHuman() - "5.00 KB of 64.00 MB". Total and percentage are null unless withKnownSize() was used. The sentences are translated, and shipped for 30 European locales
+- `data` - Whatever `withContext()` was given
+- `entryData()` - The context set on the current entry
+
+Attach per-entry context where the entry is added, and read it back on any event about it - it saves keeping a
+map from destination back to a record:
+
+```php
+$zip->fromDisk('s3', $media->path, $media->name, fn (DiskFile $f) => $f->context(['media' => $media->id]));
+
+$zip->on(fn (ProcessError $e) => Log::error('Entry failed', $e->context->entryData()));
+```
+
+One object per archive, updated as work happens: keep the value you need, not the object.
+
+### Interfaces
+Listening for an interface means listening for every event implementing it. They live in
+`ExeQue\ZipStream\Events\Contracts`, the events themselves in `ExeQue\ZipStream\Events`, and `Context` and
+`Entries`/`Bytes` in `ExeQue\ZipStream\Events\Data`.
+
+| Interface | Covers |
+|---|---|
+| `Event` | Everything below |
+| `LifecycleEvent` | Everything except byte progress - use this for logging |
+| `StreamingToZip` | `StreamingFile`, `StreamingDirectory` |
+| `StreamedToZip` | `StreamedFile`, `StreamedDirectory` |
+| `ProgressEvent` | `StreamedBytes` |
+
+### Events
+All live in `ExeQue\ZipStream\Events`.
+
+| Event | Properties | Fires |
+|---|---|---|
+| `ProcessStarted` | - | Before the entries are streamed |
+| `ProcessFinished` | - | After the last entry |
+| `ProcessAborted` | - | After `abort()` or a closed connection |
+| `ProcessError` | `exception` | When streaming an entry throws |
+| `StreamingFile` | `file`, `options` | Before a file entry |
+| `StreamedFile` | `file`, `options` | After a file entry |
+| `StreamingDirectory` | `directory`, `options` | Before a directory entry |
+| `StreamedDirectory` | `directory`, `options` | After a directory entry |
+| `StreamedBytes` | `written`, `total` | Every write of archive bytes |
+| `SavingToDisk` | `disk`, `path` | Before `saveToDisk()` writes |
+| `SavedToDisk` | `disk`, `path`, `size` | After `saveToDisk()` |
+| `SavingToFilesystem` | `path` | Before `saveToLocal()` writes |
+| `SavedToFilesystem` | `path`, `size` | After `saveToLocal()` |
+| `StreamingResponse` | - | Before the response streams |
+| `StreamedResponse` | - | After the response streams |
+
+`StreamedBytes` counts the archive's own output on every destination, so a single huge entry still reports
+progress. `written` is the bytes since the previous event, `total` the archive so far.
+
+It is throttled to at most one event per second, since PHP writes in 8 KB chunks. The last event always carries
+the finished size.
+
+```php
+Zip::progressEveryBytes(8 * 1024 * 1024)   // every 8 MB, 0 for every write
+Zip::progressEveryInterval('PT1S')         // at most once per second - better for a progress bar
+Zip::progressEveryInterval('250ms')        // ISO 8601 has no fractional seconds
+```
+
+The application default is `progress_every` in the config. The unit comes from the type:
+
+| Value | Read as |
+|---|---|
+| `int` | Bytes, `0` for every write |
+| Numeric string | Bytes - what an env var gives |
+| String starting with `P` | ISO 8601 duration: `'PT1S'` |
+| Any other string | Relative duration: `'500 milliseconds'`, `'250ms'` |
+| `DateInterval` | The interval, `$f` included |
+| `null` | The default, `PT1S` |
+
+`'PT0.5S'` is not valid ISO 8601 - write sub-second throttles relatively. A number between 1 and 8191 throws
+`InvalidProgressIntervalException`, since `1` reads as one byte when one second was meant.
+
+## Testing an Application's Own Code
+`Zip::fake()` records instead of building, in the shape of `Storage::fake()`:
+
+```php
+Zip::fake();
+
+app(BuildGalleryArchive::class)->execute($event);
+
+Zip::assertAdded('IMG-0001.jpg')
+    ->assertAddedCount(4)
+    ->assertSavedToDisk('archives/gala.zip');
+```
+
+`assertAdded`, `assertNotAdded`, `assertAddedCount`, `assertNothingAdded`, `assertSavedToDisk`,
+`assertSavedToLocal`, `assertStreamed` and `assertNothingSaved`. A faked archive writes nothing, so keep real
+storage for tests about streaming and cleanup.
+
+## Errors and Stopping Early
+`ProcessError` covers the entry being streamed, not exceptions from your own handlers. Without a handler for it,
+the exception is thrown instead of reported.
+
+```php
+use ExeQue\ZipStream\Events\ProcessError;
+use ExeQue\ZipStream\Exceptions\FileUnavailableException;
+
+$zip = Zip::as('archive.zip');
+
+$zip->on(function (ProcessError $event) use ($zip) {
+    if (! $event->exception instanceof FileUnavailableException) {
+        throw $event->exception;   // abort on anything unexpected
+    }
+
+    report($event->exception);     // log and skip the missing entry
+    $zip->abort();                 // or give up on the rest of the archive
+});
+```
+
+`abort()` stops after the entry being streamed right now and still finishes the archive, so what was written
+stays a valid zip. `abort(discard: true)` throws it away instead - the S3 multipart upload is aborted, a file
+this call created is removed, and saveToDisk()/saveToLocal() return null. Use it for a cancelled download. Throwing from a handler reaches the caller instead, which is no use once a response has
+started writing bytes. `stopOnConnectionAborted()` does the same when the client hangs up.

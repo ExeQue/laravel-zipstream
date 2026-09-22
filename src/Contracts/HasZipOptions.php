@@ -2,6 +2,7 @@
 
 namespace ExeQue\ZipStream\Contracts;
 
+use ExeQue\ZipStream\Options\ZipOptions;
 use ZipStream\CompressionMethod;
 
 interface HasZipOptions
@@ -27,11 +28,6 @@ interface HasZipOptions
     public function deflateLevel(int $level): static;
 
     /**
-     * Enable or disable the default zero header for the zip file.
-     */
-    public function zeroHeader(?bool $enabled): static;
-
-    /**
      * Enable the default zero header for the zip file.
      */
     public function withZeroHeader(): static;
@@ -40,4 +36,14 @@ interface HasZipOptions
      * Disable the default zero header for the zip file.
      */
     public function withoutZeroHeader(): static;
+
+    /**
+     * Drop the override and go back to the configured default.
+     */
+    public function inheritZeroHeader(): static;
+
+    /**
+     * The options as they stand, after every default and override.
+     */
+    public function getZipOptions(): ZipOptions;
 }

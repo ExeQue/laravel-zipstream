@@ -62,21 +62,25 @@ trait InteractsWithFileOptions
         return $this;
     }
 
-    public function zeroHeader(?bool $enabled): static
+    public function withZeroHeader(): static
     {
-        $this->fileOptions->enableZeroHeader = $enabled;
+        $this->fileOptions->enableZeroHeader = true;
 
         return $this;
     }
 
-    public function withZeroHeader(): static
-    {
-        return $this->zeroHeader(true);
-    }
-
     public function withoutZeroHeader(): static
     {
-        return $this->zeroHeader(false);
+        $this->fileOptions->enableZeroHeader = false;
+
+        return $this;
+    }
+
+    public function inheritZeroHeader(): static
+    {
+        $this->fileOptions->enableZeroHeader = null;
+
+        return $this;
     }
 
     public function exactSize(?int $size): static
