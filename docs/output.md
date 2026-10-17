@@ -68,7 +68,8 @@ by itself.
 A streamed response only streams if nothing above it is holding the bytes, so `toResponse()` clears the way
 before the first entry:
 
-- `zlib.output_compression` off, since it would hold the whole archive to recompute `Content-Length`.
+- `zlib.output_compression` off, since it would hold the whole archive to recompute `Content-Length`. It is not
+  turned back on: PHP refuses the change once output has been sent, and resets it itself when the request ends.
 - Every output buffer above this one flushed - ZipStream's own `ob_flush()` reaches the topmost one only.
 - `Content-Encoding: identity`, because nginx's gzip filter buffers regardless of `X-Accel-Buffering` unless the
   response already declares an encoding.
