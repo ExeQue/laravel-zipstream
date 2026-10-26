@@ -21,3 +21,23 @@
     --vp-c-brand-3: #d8412f;
     --vp-c-brand-soft: rgba(244, 84, 63, 0.16);
 }
+
+/*
+ * The README's badges sit on one centred line, as on GitHub; the theme
+ * otherwise turns every image into a block of its own. They are drawn a
+ * little smaller so the row fits the content column, and scroll on a phone.
+ */
+.vp-doc p[align='center']:has(> a > img[src*='badge'], > img[src*='badge']) {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+}
+
+.vp-doc p[align='center']:has(> a > img[src*='badge'], > img[src*='badge']) img {
+    display: block;
+    flex: none;
+    height: 16px;
+    width: auto;
+}
