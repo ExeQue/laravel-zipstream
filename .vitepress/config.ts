@@ -5,7 +5,8 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: 'Laravel ZipStream',
   description: 'Stream ZIP archives of any size from Laravel, at constant memory.',
-  base: '/laravel-zipstream/',
+  // GitHub Pages serves the docs under /laravel-zipstream/; the lerd docs worker serves them at the root of its subdomain.
+  base: process.env.DOCS_BASE ?? '/laravel-zipstream/',
   lastUpdated: true,
   cleanUrls: true,
 
@@ -23,6 +24,13 @@ export default defineConfig({
   rewrites: {
     'README.md': 'index.md',
     'docs/README.md': 'docs/index.md',
+  },
+
+  vite: {
+    server: {
+      // Served through lerd on docs.laravel-zipstream.test, which Vite would otherwise refuse.
+      allowedHosts: ['.test'],
+    },
   },
 
   themeConfig: {

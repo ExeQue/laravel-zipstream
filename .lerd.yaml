@@ -1,0 +1,18 @@
+domains:
+  - laravel-zipstream
+secured: true
+workers:
+  - docs
+custom_workers:
+  docs:
+    label: Docs
+    command: env DOCS_BASE=/ npx vitepress dev . --host --port "$DOCS_PORT" --strictPort
+    restart: always
+    proxy:
+      path: ""
+      port_env_key: DOCS_PORT
+      default_port: 5180
+      upstream: host
+      port: pinned
+      subdomain: docs
+    host: true
