@@ -30,6 +30,10 @@ export default defineConfig({
     server: {
       // Served through lerd on docs.laravel-zipstream.test, which Vite would otherwise refuse.
       allowedHosts: ['.test'],
+      // srcExclude only skips pages; without this the watcher also crawls vendor/.
+      watch: {
+        ignored: ['**/vendor/**', '**/workbench/**', '**/tests/**', '**/.phpunit.cache/**'],
+      },
     },
   },
 
